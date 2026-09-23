@@ -298,14 +298,25 @@ def draw_waterfall(df_chart, base, target, short_unit, title=None):
     pad = (y_max - y_min) if y_max != y_min else y_max * 0.1
     fig.update_yaxes(range=[max(0, y_min - pad), y_max + pad], tickformat=",.0f")
 
-    rate = tgt_tot / base_tot * 100 if base_tot else 0
     fig.update_layout(
         title=title or f"{SERIES_FULL[base]} → {SERIES_FULL[target]} 용도별 증감 브릿지",
         margin=dict(t=70, b=40), height=440, showlegend=False,
     )
-    fig.add_annotation(x=0.0, y=1.05, xref="paper", yref="paper", xanchor="left", yanchor="bottom",
-                       showarrow=False, font=dict(size=13, color=C_UP),
-                       text=f"증감 {tgt_tot - base_tot:+,.0f} ({rate:.1f}%)")
+
+    # 마지막(결과) 막대 위에 [증감량 증가/감소] 표시
+    diff_tot = tgt_tot - base_tot
+    rate = tgt_tot / base_tot * 100 if base_tot else 0
+    if round(diff_tot) > 0:
+        badge, badge_color = f"[▲ {diff_tot:,.0f} 증가]", "#1F5FA8"
+    elif round(diff_tot) < 0:
+        badge, badge_color = f"[▼ {abs(diff_tot):,.0f} 감소]", "#C0392B"
+    else:
+        badge, badge_color = "[변동 없음]", "#555555"
+    fig.add_annotation(
+        x=labels[-1], y=tgt_tot, xref="x", yref="y", yanchor="bottom", yshift=26, showarrow=False,
+        text=f"<b>{badge}</b><br><span style='font-size:11px; color:gray'>{SERIES_FULL[base]} 대비 {rate:.1f}%</span>",
+        font=dict(size=14, color=badge_color), align="center",
+    )
     unit_annotation(fig, short_unit)
     return style_fig(fig)
 
