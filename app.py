@@ -313,10 +313,11 @@ def draw_waterfall(df_chart, base, target, short_unit, title=None):
     else:
         badge, badge_color = "[변동 없음]", "#555555"
     fig.add_annotation(
-        x=labels[-1], y=tgt_tot, xref="x", yref="y", yanchor="bottom", yshift=26, showarrow=False,
-        text=f"<b>{badge}</b><br><span style='font-size:11px; color:gray'>{SERIES_FULL[base]} 대비 {rate:.1f}%</span>",
-        font=dict(size=14, color=badge_color), align="center",
+        x=labels[-1], y=tgt_tot, xref="x", yref="y", yanchor="bottom", yshift=30, showarrow=False,
+        text=f"<b>{badge}</b><br><span style='font-size:13px; color:gray'>{SERIES_FULL[base]} 대비 {rate:.1f}%</span>",
+        font=dict(size=17, color=badge_color), align="center",
     )
+    fig.update_layout(margin=dict(t=70, b=40, r=60))
     unit_annotation(fig, short_unit)
     return style_fig(fig)
 
