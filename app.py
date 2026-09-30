@@ -987,12 +987,12 @@ def render_supply_analysis(series, short_unit):
     # ── 1. 상품별 연도별 꺾은선 ──
     st.markdown("### 1️⃣ 상품별 연도별 추이 (꺾은선)")
     product = st.radio("📂 상품 선택", prod_opts, horizontal=True, key="sa_prod")
-    c2, c3 = st.columns([1, 1])
-    with c2:
-        kinds_sel = st.multiselect("📊 구분", kinds, default=kinds, format_func=kind_label, key="sa_kinds")
-    with c3:
-        base = latest_act if latest_act is not None else years[-1]
-        years2 = st.multiselect("📅 연도", years, default=[y for y in years if y >= base - 3], key="sa_years2")
+    st.markdown("📊 구분 (체크한 항목을 표시)")
+    chk1 = st.columns(max(len(kinds), 1))
+    kinds_sel = [k for i, k in enumerate(kinds)
+                 if chk1[i].checkbox(kind_label(k), value=True, key=f"sa_line_chk_{k}")]
+    base = latest_act if latest_act is not None else years[-1]
+    years2 = st.multiselect("📅 연도", years, default=[y for y in years if y >= base - 3], key="sa_years2")
 
     sy = sorted(years2)
 
@@ -1001,7 +1001,11 @@ def render_supply_analysis(series, short_unit):
 
     def line_color(kind, y):   # 실적 = 붉은색 계열, 계획 = 푸른색 계열 (최근 연도일수록 진하게)
         t = sy.index(y) / max(len(sy) - 1, 1)
-        return _shade((244, 170, 170), (150, 20, 30), t) if kind == "실적" else _shade((150, 190, 230), (11, 42, 85), t)
+        # 실적 = 진한 빨강 / V1 = 로열블루 계열 / V2 = 청록빛 블루 계열 (최근 연도일수록 진하게)
+        ramp = {"실적": ((214, 60, 60), (130, 10, 20)),
+                "V1": ((110, 160, 225), (20, 60, 140)),
+                "V2": ((95, 195, 215), (10, 105, 135))}.get(kind, ((150, 190, 230), (11, 42, 85)))
+        return _shade(ramp[0], ramp[1], t)
     fig2, tbl_rows = go.Figure(), []
     for y in years2:
         for k in kinds_sel:
