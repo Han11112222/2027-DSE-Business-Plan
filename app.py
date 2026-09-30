@@ -1,6 +1,7 @@
-import os
+[import os
 import re
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -22,6 +23,15 @@ GSHEET_LAST_ROW = 65
 GSHEET_LAST_COL = 702              # ZZ열
 
 EXCEL_FILE = "공급량실적_계획_실적_MJ.xlsx"
+
+# 계획 데이터: 구글 스프레드시트 (3. 공급량 분석 탭 전용)
+#   블록 1개 = 제목행 + 헤더행('구분','1월'~'12월','합계') + 용도별 행 + '합계' 행
+#   같은 연도에 블록이 2개면 1번째 = V1(제출 버전), 2번째 = V2(마케팅 버전)
+#   2027~2029년 계획은 시트 하단에 같은 형식으로 블록을 추가하면 자동 인식
+PLAN_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1PSzKts5lL_zNNi_vfKlW1CdNZasTA-jBj_UCNEtu-x0/edit?gid=0#gid=0"
+PLAN_SHEET_UNIT_TO_MJ = 1000   # 계획 시트 단위(GJ) → 앱 내부 단위(MJ)
+# 제목/헤더를 못 찾을 때 사용하는 고정 위치 (연도, 버전, 시작행, 끝행 / 엑셀 행번호, 헤더 포함)
+PLAN_FIXED_BLOCKS = [(2026, "V1", 3, 23), (2026, "V2", 27, 47)]
 
 SERIES_FULL = {
     "①": f"{BASE_YEAR} 계획",
@@ -51,6 +61,7 @@ MAPPING_SUPPLY = {
     "열병합용": "열병합용", "열병합용1": "열병합용",
     "연료전지": "연료전지", "연료전지용": "연료전지",
     "자가열전용": "자가열전용",
+    "냉난방": "영업/업무용", "업무난방": "영업/업무용", "열병합": "열병합용",   # 계획 시트 표기
     "열전용설비용": "열전용설비용(주택외)", "열전용설비용(주택외)": "열전용설비용(주택외)",
 }
 
@@ -744,6 +755,406 @@ def render_detail(data, factor, short_unit):
 
 
 # ─────────────────────────────────────────────────────────
+# 🟢 7-2. 탭 3 — 공급량 분석 (연도별 실적 vs 당초 계획 V1/V2)
+# ─────────────────────────────────────────────────────────
+KIND_LABEL = {"실적": "실적", "V1": "계획 V1(제출)", "V2": "계획 V2(마케팅)"}
+KIND_COLOR = {"실적": C_NAVY, "V1": "#9CC3E6", "V2": "#F2A65A"}
+KIND_DASH = {"실적": "solid", "V1": "dash", "V2": "dot"}
+KIND_SYMBOL = {"실적": "circle", "V1": "square", "V2": "diamond"}
+SA_ROWS = ["가정용", "영업/업무용", "산업용", "열병합용", "연료전지", "자가열전용", "열전용설비용(주택외)"]
+SA_AGG = {"가정용", "영업/업무용"}   # 시트상 '소계' 성격의 행 (하위 품목 합산) → 소계 배경색
+
+SA_CSS = """
+<style>
+.sa-wrap { overflow-x: auto; margin-bottom: 1rem; }
+.sa { border-collapse: collapse; font-family: sans-serif; font-size: 13.5px; min-width: 100%; }
+.sa th, .sa td { border: 1px solid #d0d4da; padding: 6px 9px; color: #31333F; white-space: nowrap; }
+.sa thead th { background: #FFF2CC; text-align: center; font-weight: 600; }
+.sa tbody td { text-align: right; background: #ffffff; }
+.sa td.label { text-align: center; background: #f8f9fa; font-weight: 600; }
+.sa td.tcol { background: #DDEBF7; font-weight: 700; }
+.sa .blk { border-left: 3px solid #333333 !important; }
+.sa tr.subtotal td { background: #DDEBF7; }
+.sa tr.total td { background: #FCE4D6; font-weight: 700; }
+.sa tr.ratio td { background: #F3F6FA; color: #1F5FA8; }
+.sa-unit { text-align: right; color: gray; font-size: 12px; }
+</style>
+"""
+
+
+def kind_label(k):
+    return KIND_LABEL.get(k, f"계획 {k}")
+
+
+# ── 계획 시트 파서 ────────────────────────────────────────
+_MONTH_RE = re.compile(r"^(\d{1,2})월$")
+_YEAR_RE = re.compile(r"(20\d{2})\s*년")
+
+
+def _num(v):
+    s = str(v).replace(",", "").replace(" ", "").strip()
+    if s in ("", "-", "nan"):
+        return float("nan")
+    return pd.to_numeric(s, errors="coerce")
+
+
+def parse_plan_sheet(raw):
+    """계획 시트(CSV, header=None) → (long DataFrame[연,월,그룹,값(MJ),버전], 인식 결과 info)"""
+    ncols = raw.shape[1]
+    n = len(raw)
+
+    def cell(i, j):
+        return _norm(raw.iat[i, j]) if j < ncols else ""
+
+    # 1) 헤더 행 찾기: A/B열에 '구분' + '1월'~'12월'
+    heads = []
+    for i in range(n):
+        if "구분" in (cell(i, 0), cell(i, 1)):
+            mc = {}
+            for j in range(ncols):
+                m = _MONTH_RE.match(cell(i, j))
+                if m and 1 <= int(m.group(1)) <= 12:
+                    mc[j] = int(m.group(1))
+            if len(mc) >= 12:
+                heads.append({"hdr": i, "mc": mc, "year": None, "ver": None})
+
+    # 2) 못 찾으면 고정 위치 사용 (A3:O23 / A27:O47, 월은 C~N열)
+    if not heads:
+        for y, v, r0, _r1 in PLAN_FIXED_BLOCKS:
+            heads.append({"hdr": r0 - 1, "mc": {2 + k: k + 1 for k in range(12)}, "year": y, "ver": v})
+
+    # 3) 블록별 연도/버전 결정 (제목 → 없으면 등장 순서)
+    count, used, prev_year, blocks, records, unmapped = {}, set(), None, [], [], set()
+    for b in heads:
+        title = ""
+        for k in range(b["hdr"] - 1, max(b["hdr"] - 4, -1), -1):
+            t = " ".join(str(raw.iat[k, j]) for j in range(min(4, ncols)) if str(raw.iat[k, j]).strip())
+            if _YEAR_RE.search(t):
+                title = t
+                break
+        m = _YEAR_RE.search(title)
+        year = b["year"] or (int(m.group(1)) if m else
+                             (BASE_YEAR if prev_year is None else
+                              (prev_year if count.get(prev_year, 0) < 2 else prev_year + 1)))
+        tl = title.lower()
+        ver = b["ver"] or ("V2" if ("마케팅" in tl or "marketing" in tl)
+                           else "V1" if ("normal" in tl or "제출" in tl) else f"V{count.get(year, 0) + 1}")
+        if (year, ver) in used:
+            ver = f"V{count.get(year, 0) + 1}"
+        used.add((year, ver))
+        count[year] = count.get(year, 0) + 1
+        prev_year = year
+
+        # 4) 용도 행 파싱 ('합계' 행 또는 다음 블록 시작 전까지, 소계·합계 제외)
+        next_hdr = min([h["hdr"] for h in heads if h["hdr"] > b["hdr"]], default=n)
+        n_rows = 0
+        for i in range(b["hdr"] + 1, min(next_hdr, n)):
+            a, bb = cell(i, 0), cell(i, 1)
+            if a == "합계" or bb == "합계":
+                break
+            if a == "소계" or bb == "소계":
+                continue
+            item = bb or a
+            if not item:
+                continue
+            if _YEAR_RE.search(item):   # 다음 블록 제목
+                break
+            group = MAPPING_SUPPLY.get(item) or MAPPING_SUPPLY.get(a)
+            if group is None:
+                group = item
+                unmapped.add(item)
+            hit = False
+            for j, mth in b["mc"].items():
+                val = _num(raw.iat[i, j])
+                if pd.notna(val) and val != 0:
+                    records.append((year, mth, group, float(val) * PLAN_SHEET_UNIT_TO_MJ, ver))
+                    hit = True
+            n_rows += hit
+        blocks.append({"연도": year, "버전": ver, "헤더 행": b["hdr"] + 1, "용도 행 수": n_rows, "제목": title or "(제목 없음)"})
+
+    df = pd.DataFrame(records, columns=['연', '월', '그룹', '값', '버전'])
+    return df, {"blocks": blocks, "unmapped": sorted(unmapped)}
+
+
+@st.cache_data(ttl=600, show_spinner="구글시트 계획 불러오는 중...")
+def fetch_gsheet_plan(url):
+    raw = pd.read_csv(to_csv_url(url), header=None, dtype=str, keep_default_na=False)
+    return parse_plan_sheet(raw)
+
+
+# ── 집계 도우미 ───────────────────────────────────────────
+def kinds_in(series):
+    plan_kinds = sorted({k for (k, _y) in series if k != "실적"})
+    return (["실적"] if any(k == "실적" for (k, _y) in series) else []) + plan_kinds
+
+
+def sa_avail_months(df):
+    t = df.groupby('월')['값'].sum()
+    return sorted(int(m) for m in t[t != 0].index)
+
+
+def sa_month_vec(df, group=None):
+    """월(1~12) 벡터. 데이터가 없는 달은 NaN (진행 중인 연도의 미래 월 등)"""
+    av = sa_avail_months(df)
+    d = df if group is None else df[df['그룹'].map(to_chart_group) == group]
+    v = d.groupby('월')['값'].sum().reindex(range(1, 13)).fillna(0.0)
+    return v.where(v.index.isin(av))
+
+
+def sa_cumulative(v):
+    return v.fillna(0).cumsum().where(v.notna())
+
+
+def sa_build_rows(cols, tcols=()):
+    """cols: [Series(그룹→값) | None]. 시트 양식과 같은 행 구성 (소계=파랑, 합계=주황)"""
+    names = set()
+    for c in cols:
+        if c is not None:
+            names |= set(c.index)
+    extras = sorted(g for g in names if g not in SA_ROWS and g not in TRANSPORT_GROUPS)
+
+    def cells(fn):
+        out = []
+        for k, c in enumerate(cols):
+            cls = "tcol" if k in tcols else ""
+            out.append(("-" if c is None else f"{fn(c):,.0f}", cls))
+        return out
+
+    rows = []
+    for g in SA_ROWS + extras:
+        rows.append(dict(label=DISPLAY_NAME.get(g, g) + (" (소계)" if g in SA_AGG else ""),
+                         cls="subtotal" if g in SA_AGG else "", cells=cells(lambda c, g=g: c.get(g, 0.0))))
+    for g in TRANSPORT_GROUPS:
+        rows.append(dict(label=f"수송용 · {g}", cls="", cells=cells(lambda c, g=g: c.get(g, 0.0))))
+    rows.append(dict(label="수송용 (소계)", cls="subtotal",
+                     cells=cells(lambda c: sum(c.get(g, 0.0) for g in TRANSPORT_GROUPS))))
+    rows.append(dict(label="합계", cls="total", cells=cells(lambda c: c.sum())))
+    return rows
+
+
+def sa_render_table(head_html, rows, short_unit):
+    body = ""
+    for r in rows:
+        tds = "".join(f'<td class="{c}">{t}</td>' for t, c in r["cells"])
+        body += f'<tr class="{r["cls"]}"><td class="label">{r["label"]}</td>{tds}</tr>'
+    st.markdown(SA_CSS + f'<div class="sa-unit">(단위 : {short_unit})</div>'
+                f'<div class="sa-wrap"><table class="sa"><thead>{head_html}</thead><tbody>{body}</tbody></table></div>',
+                unsafe_allow_html=True)
+
+
+def build_sa_series(actual, plan_long, factor):
+    """{(구분, 연도): DataFrame[월,그룹,값]} — 구분 = 실적 / V1 / V2 ...  (단위 변환 완료)"""
+    out = {}
+
+    def add(kind, df):
+        if df is None or df.empty:
+            return
+        for y, g in df.groupby('연'):
+            out[(kind, int(y))] = scale(g[['월', '그룹', '값']], factor).reset_index(drop=True)
+
+    add("실적", actual)
+    if plan_long is not None and not plan_long.empty:
+        for v, g in plan_long.groupby('버전'):
+            add(v, g)
+    return out
+
+
+# ── 화면 ─────────────────────────────────────────────────
+def render_supply_analysis(series, short_unit):
+    st.subheader(f"📊 공급량 분석 — 연도별 실적 vs 당초 계획 ({short_unit})")
+    if not series:
+        st.warning("표시할 실적/계획 데이터가 없습니다.")
+        return
+
+    years = sorted({y for (_k, y) in series})
+    kinds = kinds_in(series)
+    act_years = [y for (k, y) in series if k == "실적"]
+    latest_act = max(act_years) if act_years else None
+    default_n = 12
+    if latest_act is not None:
+        av = sa_avail_months(series[("실적", latest_act)])
+        if av and max(av) < 12:
+            default_n = max(av)
+
+    all_groups = {to_chart_group(g) for df in series.values() for g in df['그룹'].unique()}
+    prod_opts = ["전체"] + [g for g in CHART_ORDER if g in all_groups] + sorted(all_groups - set(CHART_ORDER))
+    color_by_year = {y: LINE_PALETTE[i % len(LINE_PALETTE)] for i, y in enumerate(years)}
+
+    # ── 1. 연도별 누적 공급량 (전체량) ──
+    st.markdown("### 1️⃣ 연도별 누적 공급량 비교 (전체량)")
+    c1, c2 = st.columns([2, 3])
+    with c1:
+        n = st.select_slider("📆 누적 기준월 (1월 ~ N월)", options=list(range(1, 13)), value=default_n,
+                             format_func=lambda m: f"{m}월", key="sa_n")
+    with c2:
+        sel_years = st.multiselect("📅 조회 연도 (실적 + 계획)", years, default=years[-8:], key="sa_years1")
+
+    def complete(kind, y):
+        df = series.get((kind, y))
+        return df is not None and set(range(1, n + 1)) <= set(sa_avail_months(df))
+
+    def cum_total(kind, y):
+        if not complete(kind, y):
+            return None
+        df = series[(kind, y)]
+        return float(df.loc[df['월'] <= n, '값'].sum())
+
+    if sel_years:
+        period = "1~12월(연간)" if n == 12 else f"1~{n}월 누적"
+        fig = go.Figure()
+        for k in kinds:
+            ys = [cum_total(k, y) for y in sel_years]
+            fig.add_trace(go.Bar(name=kind_label(k), x=[str(y) for y in sel_years], y=ys,
+                                 marker_color=KIND_COLOR.get(k, "#B0B0B0"),
+                                 text=[f"{v:,.0f}" if v is not None else "" for v in ys],
+                                 textposition="outside", textfont=dict(size=12), cliponaxis=False,
+                                 hovertemplate="%{x} " + kind_label(k) + "<br>%{y:,.0f}<extra></extra>"))
+        fig.update_layout(barmode="group", title=f"연도별 공급량 — {period}", xaxis=dict(type="category"),
+                          xaxis_title="", yaxis_title="", legend_title="", height=460, margin=dict(t=70))
+        fig.update_yaxes(tickformat=",.0f")
+        unit_annotation(fig, short_unit)
+        st.plotly_chart(style_fig(fig), width="stretch")
+
+        skipped = [f"{y} {kind_label(k)}" for y in sel_years for k in kinds
+                   if (k, y) in series and not complete(k, y)]
+        if skipped:
+            st.caption(f"※ 1~{n}월 데이터가 모두 없는 항목은 그래프에서 제외했습니다: {', '.join(skipped)}")
+
+        st.markdown(f"##### 📋 연도별 용도별 수치 ({period})")
+        cols, head1, head2 = [], "", ""
+        for y in sel_years:
+            ks = [k for k in kinds if (k, y) in series]
+            if not ks:
+                continue
+            head1 += f'<th colspan="{len(ks)}" class="blk">{y}년</th>'
+            for i, k in enumerate(ks):
+                head2 += f'<th class="{"blk" if i == 0 else ""}">{kind_label(k)}</th>'
+                df = series[(k, y)]
+                cols.append(df[df['월'] <= n].groupby('그룹')['값'].sum() if complete(k, y) else None)
+        rows = sa_build_rows(cols)
+        # 실적 ÷ 계획 (%) 행: 실적 열에만 표시
+        col_meta = [(k, y) for y in sel_years for k in kinds if (k, y) in series]
+        for pk in [k for k in kinds if k != "실적"]:
+            cells = []
+            for (k, y), c in zip(col_meta, cols):
+                pc = cols[col_meta.index((pk, y))] if (pk, y) in col_meta else None
+                ok = k == "실적" and c is not None and pc is not None and pc.sum() != 0
+                cells.append((f"{c.sum() / pc.sum() * 100:,.1f}%" if ok else "-", ""))
+            rows.append(dict(label=f"실적 ÷ {kind_label(pk)}", cls="ratio", cells=cells))
+        head = f'<tr><th rowspan="2">구분</th>{head1}</tr><tr>{head2}</tr>'
+        sa_render_table(head, rows, short_unit)
+    st.markdown("---")
+
+    # ── 2. 상품별 연도별 꺾은선 ──
+    st.markdown("### 2️⃣ 상품별 연도별 추이 (꺾은선)")
+    product = st.radio("📂 상품 선택", prod_opts, horizontal=True, key="sa_prod")
+    c1, c2, c3 = st.columns([2, 3, 3])
+    with c1:
+        mode = st.radio("표시 방식", ["누적", "월별"], horizontal=True, key="sa_mode")
+    with c2:
+        kinds_sel = st.multiselect("📊 구분", kinds, default=kinds, format_func=kind_label, key="sa_kinds")
+    with c3:
+        base = latest_act if latest_act is not None else years[-1]
+        years2 = st.multiselect("📅 연도", years, default=[y for y in years if y >= base - 3], key="sa_years2")
+
+    fig2, tbl_rows = go.Figure(), []
+    for y in years2:
+        for k in kinds_sel:
+            if (k, y) not in series:
+                continue
+            v = sa_month_vec(series[(k, y)], None if product == "전체" else product)
+            vv = sa_cumulative(v) if mode == "누적" else v
+            name = f"{y} {kind_label(k)}"
+            fig2.add_trace(go.Scatter(
+                x=list(range(1, 13)), y=vv.values, name=name, mode="lines+markers",
+                line=dict(color=color_by_year[y], dash=KIND_DASH.get(k, "dash"), width=3 if k == "실적" else 2),
+                marker=dict(size=7 if k == "실적" else 6, symbol=KIND_SYMBOL.get(k, "triangle-up")),
+                connectgaps=False, hovertemplate=name + " %{x}월<br>%{y:,.0f}<extra></extra>"))
+            tot = vv.dropna().iloc[-1] if mode == "누적" and vv.notna().any() else vv.sum()
+            tbl_rows.append(dict(label=name, cls="", cells=[("-" if pd.isna(x) else f"{x:,.0f}", "") for x in vv]
+                                 + [(f"{tot:,.0f}", "tcol")]))
+    if not tbl_rows:
+        st.info("선택한 연도/구분에 해당하는 데이터가 없습니다.")
+    else:
+        fig2.update_xaxes(tickvals=list(range(1, 13)), ticktext=[f"{i}월" for i in range(1, 13)])
+        fig2.update_yaxes(tickformat=",.0f")
+        fig2.update_layout(title=f"{product} — 연도별 {'누적' if mode == '누적' else '월별'} 공급량",
+                           xaxis_title="", yaxis_title="", legend_title="", height=520, hovermode="closest")
+        unit_annotation(fig2, short_unit)
+        st.plotly_chart(style_fig(fig2), width="stretch")
+
+        st.markdown(f"##### 📋 {product} — 연도별 {'누적' if mode == '누적' else '월별'} 수치")
+        head = "<tr><th>구분</th>" + "".join(f"<th>{m}월</th>" for m in range(1, 13)) + "<th>합계</th></tr>"
+        sa_render_table(head, tbl_rows, short_unit)
+        st.caption("※ 합계 = " + ("해당 연도·구분의 마지막 누적값 (진행 중인 연도는 실적이 있는 달까지)" if mode == "누적"
+                                  else "월별 값의 합 (진행 중인 연도는 실적이 있는 달까지)"))
+    st.markdown("---")
+
+    # ── 3. 선택 연도·구분의 용도 × 월 상세 ──
+    st.markdown("### 3️⃣ 용도별 월별 상세 (연도·구분 선택)")
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        y3 = st.selectbox("📅 연도", years, index=years.index(latest_act) if latest_act in years else len(years) - 1,
+                          key="sa_y3")
+    ks3 = [k for k in kinds if (k, y3) in series]
+    with c2:
+        k3 = st.radio("📊 구분", ks3, horizontal=True, format_func=kind_label, key="sa_k3") if ks3 else None
+    if k3:
+        df3 = series[(k3, y3)]
+        av3 = set(sa_avail_months(df3))
+        fig3 = go.Figure()
+        d3 = df3.assign(그룹=df3['그룹'].map(to_chart_group))
+        gorder = [g for g in CHART_ORDER if g in set(d3['그룹'])] + sorted(set(d3['그룹']) - set(CHART_ORDER))
+        for i, g in enumerate(gorder):
+            s = d3[d3['그룹'] == g].groupby('월')['값'].sum().reindex(range(1, 13)).where(lambda x: x.index.isin(av3))
+            fig3.add_trace(go.Bar(name=DISPLAY_NAME.get(g, g), x=[f"{m}월" for m in range(1, 13)], y=s.values,
+                                  marker_color=LINE_PALETTE[i % len(LINE_PALETTE)],
+                                  hovertemplate=DISPLAY_NAME.get(g, g) + " %{x}<br>%{y:,.0f}<extra></extra>"))
+        fig3.update_layout(barmode="stack", title=f"{y3}년 {kind_label(k3)} — 월별 용도 구성",
+                           xaxis_title="", yaxis_title="", legend_title="", height=460)
+        fig3.update_yaxes(tickformat=",.0f")
+        unit_annotation(fig3, short_unit)
+        st.plotly_chart(style_fig(fig3), width="stretch")
+
+        st.markdown(f"##### 📋 {y3}년 {kind_label(k3)} — 용도 × 월")
+        cols3 = [df3[df3['월'] == m].groupby('그룹')['값'].sum() if m in av3 else None for m in range(1, 13)]
+        cols3.append(df3.groupby('그룹')['값'].sum())
+        head = "<tr><th>구분</th>" + "".join(f"<th>{m}월</th>" for m in range(1, 13)) + "<th>합계</th></tr>"
+        sa_render_table(head, sa_build_rows(cols3, tcols={12}), short_unit)
+
+
+def render_supply_page(data_dict, gs_long, plan_url, plan_status, factor, short_unit):
+    """3번 탭: 실적(구글시트) + 계획(구글시트)만으로 구성. 엑셀 업로드는 필요 없음"""
+    # 실적 = '2. 세부내용'과 동일 기준 (구글시트 우선, 엑셀이 있으면 구글시트에 없는 연·월만 보충)
+    if data_dict:
+        actual = assemble_data(data_dict, gs_long)["actual"]
+    else:
+        actual = gs_long
+    if actual is None or actual.empty:
+        st.error("실적 데이터를 불러오지 못했습니다. 사이드바의 구글시트 주소/공유 설정을 확인해주세요.")
+        return
+
+    plan_long, info = pd.DataFrame(columns=['연', '월', '그룹', '값', '버전']), None
+    try:
+        plan_long, info = fetch_gsheet_plan(plan_url.strip())
+        if plan_long.empty:
+            plan_status.warning("계획 시트에서 값을 찾지 못했습니다. 실적만 표시합니다.")
+        else:
+            desc = ", ".join(f"{b['연도']} {b['버전']}" for b in info["blocks"])
+            plan_status.success(f"✅ 계획 반영: {desc}")
+    except Exception as e:
+        plan_status.warning(f"계획 구글시트 연결 실패 → 실적만 표시합니다.\n\n({type(e).__name__}: {e})")
+
+    render_supply_analysis(build_sa_series(actual, plan_long, factor), short_unit)
+
+    if info:
+        with st.expander("🔍 계획 시트 인식 결과 (확인용)"):
+            st.dataframe(pd.DataFrame(info["blocks"]), hide_index=True)
+            if info["unmapped"]:
+                st.warning("용도 매핑에 없는 항목(그대로 별도 용도로 표시됨): " + ", ".join(info["unmapped"]))
+
+
+# ─────────────────────────────────────────────────────────
 # 🟢 8. 메인 실행
 # ─────────────────────────────────────────────────────────
 def main():
@@ -752,7 +1163,7 @@ def main():
 
     with st.sidebar:
         st.header("⚙️ 메뉴 및 기본 설정")
-        menu = st.radio("📋 보고서 탭 선택", ["1. One page review", "2. 세부내용"])
+        menu = st.radio("📋 보고서 탭 선택", ["1. One page review", "2. 세부내용", "3. 공급량 분석"])
         st.markdown("---")
         unit = st.radio("단위 선택", ["열량 (GJ)", "부피 (천m³)"], index=0)
         heating_value = 42.563
@@ -767,16 +1178,26 @@ def main():
         gs_status = st.empty()
 
         st.markdown("---")
-        st.subheader("📂 계획 데이터 업로드")
-        up_supply = st.file_uploader("공급량 데이터 업로드 (새 파일이 있으면 우선 반영됩니다)", type=["xlsx", "csv"])
+        st.subheader("🔗 계획 데이터 (구글시트) · 3번 탭")
+        plan_url = st.text_input("계획 스프레드시트 주소", value=PLAN_GSHEET_URL)
+        if st.button("🔄 계획 새로고침"):
+            fetch_gsheet_plan.clear()
+        plan_status = st.empty()
 
-    # 계획 데이터 (엑셀)
+        st.markdown("---")
+        st.subheader("📂 계획 데이터 업로드 (1·2번 탭용)")
+        up_supply = st.file_uploader("공급량 데이터 업로드 (새 파일이 있으면 우선 반영됩니다)", type=["xlsx", "csv"])
+        st.caption("3. 공급량 분석 탭은 업로드 없이 구글시트만 사용합니다.")
+
+    is_tab3 = menu.startswith("3.")
+
+    # 계획 데이터 (엑셀) — 1·2번 탭 전용 (3번 탭은 없어도 동작)
     default_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), EXCEL_FILE)
     target_file = up_supply if up_supply is not None else (default_file if os.path.exists(default_file) else None)
-    if target_file is None:
+    if target_file is None and not is_tab3:
         st.info(f"👈 좌측 사이드바에서 공급량 파일을 업로드하거나, 프로젝트 폴더에 {EXCEL_FILE} 파일을 배치해 주세요.")
         return
-    data_dict = load_all_sheets(target_file)
+    data_dict = load_all_sheets(target_file) if target_file is not None else {}
 
     # 실적 데이터 (구글시트)
     gs_long = pd.DataFrame(columns=['연', '월', '그룹', '값'])
@@ -791,15 +1212,19 @@ def main():
     except Exception as e:
         gs_status.warning(f"구글시트 연결 실패 → 엑셀 실적으로 대체합니다.\n\n({type(e).__name__})")
 
+    short_unit = "GJ" if "GJ" in unit else "천m³"
+    factor = 1 / 1000 if "GJ" in unit else 1 / heating_value / 1000   # 원자료 MJ 기준
+
+    if is_tab3:
+        render_supply_page(data_dict, gs_long, plan_url, plan_status, factor, short_unit)
+        return
+
     data = assemble_data(data_dict, gs_long)
 
     act_months = data["act_months"]
     if act_months and max(act_months) < 12:
         st.caption(f"ℹ️ ② {BASE_YEAR} 실적(예상) = 1~{max(act_months)}월 실적 + "
                    f"{max(act_months) + 1}~12월 실천사업계획")
-
-    short_unit = "GJ" if "GJ" in unit else "천m³"
-    factor = 1 / 1000 if "GJ" in unit else 1 / heating_value / 1000   # 원자료 MJ 기준
 
     if menu == "1. One page review":
         render_one_page_review(data, factor, short_unit)
