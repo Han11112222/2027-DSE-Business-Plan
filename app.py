@@ -1064,10 +1064,10 @@ def render_supply_analysis(series, short_unit):
         st.info("비교할 구분(실적, 계획 V1, 계획 V2)을 하나 이상 체크해주세요.")
     else:
         SHORT = {"실적": "실적", "V1": "V1", "V2": "V2"}
-        # 구분별 색상 계열 (진함=가정용 / 중간=산업용 / 연함=기타): 실적=붉은색, V1=파랑, V2=청록빛 파랑
-        STACK_COLORS = {"실적": ["#9E1B26", "#D05A5A", "#EFA3A3"],
-                        "V1": ["#143C8C", "#3C6EBE", "#96B9E6"],
-                        "V2": ["#0A6987", "#32A0B9", "#8CCDDC"]}
+        # 구분별 색상 계열 (진함=가정용 / 중간=산업용 / 연함=기타): 실적=기존 파랑, V1=회색, V2=청록빛 파랑
+        STACK_COLORS = {"실적": [C_NAVY, C_UP, C_DOWN],               # 기존 푸른색 (진함/중간/연함)
+                        "V1": ["#4B5563", "#8A94A3", "#C3CAD4"],       # 회색 계열
+                        "V2": ["#0A6987", "#32A0B9", "#8CCDDC"]}       # 청록빛 파랑 계열
         simple3 = lambda g: g if g in ("가정용", "산업용") else "기타"
         mlabels = [f"{m}월" for m in range(1, 13) for _ in sel3]
         klabels = [SHORT.get(k, k) for _m in range(1, 13) for k in sel3]
