@@ -1002,15 +1002,16 @@ def render_supply_analysis(series, short_unit):
         return "#%02X%02X%02X" % tuple(round(l + (h - l) * t) for l, h in zip(lo, hi))
 
     def line_color(kind, y):
-        # 기준연도(BASE_YEAR) 실적 = 붉은색(메인), 과거 실적 = 회색 계열, V1 = 로열블루, V2 = 청록빛 블루
+        # 기준연도(BASE_YEAR) 실적 = 붉은색(메인), 과거 실적 = 회색 계열, V1 = 파랑, V2 = 초록빛 청록
         t = sy.index(y) / max(len(sy) - 1, 1)
         if kind == "실적":
             if y == BASE_YEAR:
                 return "#D32F2F"
             return _shade((185, 192, 202), (85, 95, 110), t)   # 오래된 연도 = 연한 회색 → 최근 = 진한 회색
-        ramp = {"V1": ((110, 160, 225), (20, 60, 140)),
-                "V2": ((95, 195, 215), (10, 105, 135))}.get(kind, ((150, 190, 230), (11, 42, 85)))
-        return _shade(ramp[0], ramp[1], t)
+        # V1 = 파랑, V2 = 초록빛 청록 (색상 차이를 크게) — 단일 연도여도 너무 연하지 않도록 0.35~1.0 구간 사용
+        ramp = {"V1": ((80, 135, 225), (15, 55, 150)),
+                "V2": ((60, 200, 170), (5, 120, 95))}.get(kind, ((150, 190, 230), (11, 42, 85)))
+        return _shade(ramp[0], ramp[1], 0.35 + 0.65 * t)
 
     fig2, tbl_rows = go.Figure(), []
     for y in years2:
@@ -1023,7 +1024,7 @@ def render_supply_analysis(series, short_unit):
             fig2.add_trace(go.Scatter(
                 x=list(range(1, 13)), y=vv.values, name=name, mode="lines+markers",
                 line=dict(color=line_color(k, y), dash=KIND_DASH.get(k, "dash"),
-                          width=4 if (k == "실적" and y == BASE_YEAR) else (2.5 if k == "실적" else 2)),
+                          width=4 if (k == "실적" and y == BASE_YEAR) else 2.8),
                 marker=dict(size=7 if k == "실적" else 6, symbol=KIND_SYMBOL.get(k, "triangle-up")),
                 connectgaps=False, hovertemplate=name + " %{x}월<br>%{y:,.0f}<extra></extra>"))
             tot = vv.sum()
