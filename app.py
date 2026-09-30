@@ -1048,9 +1048,7 @@ def render_supply_analysis(series, short_unit):
     # ── 2. 상품별 연도별 꺾은선 ──
     st.markdown("### 2️⃣ 상품별 연도별 추이 (꺾은선)")
     product = st.radio("📂 상품 선택", prod_opts, horizontal=True, key="sa_prod")
-    c1, c2, c3 = st.columns([2, 3, 3])
-    with c1:
-        mode = st.radio("표시 방식", ["누적", "월별"], horizontal=True, key="sa_mode")
+    c2, c3 = st.columns([1, 1])
     with c2:
         kinds_sel = st.multiselect("📊 구분", kinds, default=kinds, format_func=kind_label, key="sa_kinds")
     with c3:
@@ -1063,14 +1061,14 @@ def render_supply_analysis(series, short_unit):
             if (k, y) not in series:
                 continue
             v = sa_month_vec(series[(k, y)], None if product == "전체" else product)
-            vv = sa_cumulative(v) if mode == "누적" else v
+            vv = v   # 월별 공급량
             name = f"{y} {kind_label(k)}"
             fig2.add_trace(go.Scatter(
                 x=list(range(1, 13)), y=vv.values, name=name, mode="lines+markers",
                 line=dict(color=color_by_year[y], dash=KIND_DASH.get(k, "dash"), width=3 if k == "실적" else 2),
                 marker=dict(size=7 if k == "실적" else 6, symbol=KIND_SYMBOL.get(k, "triangle-up")),
                 connectgaps=False, hovertemplate=name + " %{x}월<br>%{y:,.0f}<extra></extra>"))
-            tot = vv.dropna().iloc[-1] if mode == "누적" and vv.notna().any() else vv.sum()
+            tot = vv.sum()
             tbl_rows.append(dict(label=name, cls="", cells=[("-" if pd.isna(x) else f"{x:,.0f}", "") for x in vv]
                                  + [(f"{tot:,.0f}", "tcol")]))
     if not tbl_rows:
@@ -1078,16 +1076,15 @@ def render_supply_analysis(series, short_unit):
     else:
         fig2.update_xaxes(tickvals=list(range(1, 13)), ticktext=[f"{i}월" for i in range(1, 13)])
         fig2.update_yaxes(tickformat=",.0f")
-        fig2.update_layout(title=f"{product} — 연도별 {'누적' if mode == '누적' else '월별'} 공급량",
+        fig2.update_layout(title=f"{product} — 연도별 월별 공급량",
                            xaxis_title="", yaxis_title="", legend_title="", height=520, hovermode="closest")
         unit_annotation(fig2, short_unit)
         st.plotly_chart(style_fig(fig2), width="stretch")
 
-        st.markdown(f"##### 📋 {product} — 연도별 {'누적' if mode == '누적' else '월별'} 수치")
+        st.markdown(f"##### 📋 {product} — 연도별 월별 수치")
         head = "<tr><th>구분</th>" + "".join(f"<th>{m}월</th>" for m in range(1, 13)) + "<th>합계</th></tr>"
         sa_render_table(head, tbl_rows, short_unit)
-        st.caption("※ 합계 = " + ("해당 연도·구분의 마지막 누적값 (진행 중인 연도는 실적이 있는 달까지)" if mode == "누적"
-                                  else "월별 값의 합 (진행 중인 연도는 실적이 있는 달까지)"))
+        st.caption("※ 합계 = 월별 값의 합 (진행 중인 연도는 실적이 있는 달까지)")
     st.markdown("---")
 
     # ── 3. 선택 연도·구분의 용도 × 월 상세 ──
@@ -1103,14 +1100,13 @@ def render_supply_analysis(series, short_unit):
         df3 = series[(k3, y3)]
         av3 = set(sa_avail_months(df3))
         fig3 = go.Figure()
-        d3 = df3.assign(그룹=df3['그룹'].map(to_chart_group))
-        gorder = [g for g in CHART_ORDER if g in set(d3['그룹'])] + sorted(set(d3['그룹']) - set(CHART_ORDER))
-        for i, g in enumerate(gorder):
+        d3 = df3.assign(그룹=df3['그룹'].map(lambda g: g if g in ("가정용", "산업용") else "기타"))
+        blues = {"가정용": C_NAVY, "산업용": C_UP, "기타": C_DOWN}   # 푸른색 계열
+        for g in ["가정용", "산업용", "기타"]:
             s = d3[d3['그룹'] == g].groupby('월')['값'].sum().reindex(range(1, 13)).where(lambda x: x.index.isin(av3))
-            fig3.add_trace(go.Bar(name=DISPLAY_NAME.get(g, g), x=[f"{m}월" for m in range(1, 13)], y=s.values,
-                                  marker_color=LINE_PALETTE[i % len(LINE_PALETTE)],
-                                  hovertemplate=DISPLAY_NAME.get(g, g) + " %{x}<br>%{y:,.0f}<extra></extra>"))
-        fig3.update_layout(barmode="stack", title=f"{y3}년 {kind_label(k3)} — 월별 용도 구성",
+            fig3.add_trace(go.Bar(name=g, x=[f"{m}월" for m in range(1, 13)], y=s.values, marker_color=blues[g],
+                                  hovertemplate=g + " %{x}<br>%{y:,.0f}<extra></extra>"))
+        fig3.update_layout(barmode="stack", title=f"{y3}년 {kind_label(k3)} — 월별 공급량 (가정용·산업용·기타)",
                            xaxis_title="", yaxis_title="", legend_title="", height=460)
         fig3.update_yaxes(tickformat=",.0f")
         unit_annotation(fig3, short_unit)
