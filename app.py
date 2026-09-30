@@ -758,7 +758,7 @@ def render_detail(data, factor, short_unit):
 # 🟢 7-2. 탭 3 — 공급량 분석 (연도별 실적 vs 당초 계획 V1/V2)
 # ─────────────────────────────────────────────────────────
 KIND_LABEL = {"실적": "실적", "V1": "계획 V1(제출)", "V2": "계획 V2(마케팅)"}
-KIND_COLOR = {"실적": C_NAVY, "V1": "#9CC3E6", "V2": "#F2A65A"}
+KIND_COLOR = {"실적": C_NAVY, "V1": "#4A90D9", "V2": "#8FB8E8"}
 KIND_DASH = {"실적": "solid", "V1": "dash", "V2": "dot"}
 KIND_SYMBOL = {"실적": "circle", "V1": "square", "V2": "diamond"}
 SA_ROWS = ["가정용", "영업/업무용", "산업용", "열병합용", "연료전지", "자가열전용", "열전용설비용(주택외)"]
@@ -978,39 +978,60 @@ def render_supply_analysis(series, short_unit):
 
     all_groups = {to_chart_group(g) for df in series.values() for g in df['그룹'].unique()}
     prod_opts = ["전체"] + [g for g in CHART_ORDER if g in all_groups] + sorted(all_groups - set(CHART_ORDER))
-    color_by_year = {y: LINE_PALETTE[i % len(LINE_PALETTE)] for i, y in enumerate(years)}
+    # 푸른색 계열: 오래된 연도 = 연한 파랑 → 최근 연도 = 진한 남색
+    def _blue(t):
+        lo, hi = (150, 190, 230), (11, 42, 85)
+        return "#%02X%02X%02X" % tuple(round(l + (h - l) * t) for l, h in zip(lo, hi))
+    color_by_year = {y: _blue(i / max(len(years) - 1, 1)) for i, y in enumerate(years)}
 
-    # ── 1. 연도별 누적 공급량 (전체량) ──
-    st.markdown("### 1️⃣ 연도별 누적 공급량 비교 (전체량)")
-    c1, c2 = st.columns([2, 3])
+    # ── 1. 연도별 공급량 비교 (꺾은선) ──
+    st.markdown("### 1️⃣ 연도별 공급량 비교")
+    PERIODS = {"상반기": range(1, 7), "하반기": range(7, 13), "전체": range(1, 13)}
+    SIMPLE = ["가정용", "산업용", "기타"]
+    simple_of = lambda g: to_chart_group(g) if to_chart_group(g) in ("가정용", "산업용") else "기타"
+
+    default_period = "전체"
+    if latest_act is not None and set(range(1, 7)) <= set(sa_avail_months(series[("실적", latest_act)])):
+        default_period = "상반기"
+    c1, c2 = st.columns([1, 1])
     with c1:
-        n = st.select_slider("📆 누적 기준월 (1월 ~ N월)", options=list(range(1, 13)), value=default_n,
-                             format_func=lambda m: f"{m}월", key="sa_n")
+        period = st.radio("📆 기간", list(PERIODS), index=list(PERIODS).index(default_period), horizontal=True,
+                          key="sa_period")
     with c2:
-        sel_years = st.multiselect("📅 조회 연도 (실적 + 계획)", years, default=years[-8:], key="sa_years1")
+        prod1 = st.radio("📂 용도", ["전체"] + SIMPLE, horizontal=True, key="sa_prod1")
+    sel_years = st.multiselect("📅 조회 연도 (실적 + 계획)", years, default=years[-8:], key="sa_years1")
+    months = list(PERIODS[period])
 
     def complete(kind, y):
         df = series.get((kind, y))
-        return df is not None and set(range(1, n + 1)) <= set(sa_avail_months(df))
+        return df is not None and set(months) <= set(sa_avail_months(df))
 
-    def cum_total(kind, y):
+    def period_simple(kind, y):
+        """기간 내 합계를 가정용/산업용/기타로 묶은 Series (기간 데이터가 모자라면 None)"""
         if not complete(kind, y):
             return None
         df = series[(kind, y)]
-        return float(df.loc[df['월'] <= n, '값'].sum())
+        d = df[df['월'].isin(months)]
+        return d.groupby(d['그룹'].map(simple_of))['값'].sum().reindex(SIMPLE).fillna(0.0)
+
+    def pick(c):
+        return None if c is None else (float(c.sum()) if prod1 == "전체" else float(c[prod1]))
 
     if sel_years:
-        period = "1~12월(연간)" if n == 12 else f"1~{n}월 누적"
+        span = {"상반기": "1~6월", "하반기": "7~12월", "전체": "1~12월(연간)"}[period]
         fig = go.Figure()
         for k in kinds:
-            ys = [cum_total(k, y) for y in sel_years]
-            fig.add_trace(go.Bar(name=kind_label(k), x=[str(y) for y in sel_years], y=ys,
-                                 marker_color=KIND_COLOR.get(k, "#B0B0B0"),
-                                 text=[f"{v:,.0f}" if v is not None else "" for v in ys],
-                                 textposition="outside", textfont=dict(size=12), cliponaxis=False,
-                                 hovertemplate="%{x} " + kind_label(k) + "<br>%{y:,.0f}<extra></extra>"))
-        fig.update_layout(barmode="group", title=f"연도별 공급량 — {period}", xaxis=dict(type="category"),
-                          xaxis_title="", yaxis_title="", legend_title="", height=460, margin=dict(t=70))
+            ys = [pick(period_simple(k, y)) for y in sel_years]
+            fig.add_trace(go.Scatter(
+                name=kind_label(k), x=[str(y) for y in sel_years], y=ys, mode="lines+markers" + ("+text" if k == "실적" else ""),
+                line=dict(color=KIND_COLOR.get(k, "#7F9DB9"), dash=KIND_DASH.get(k, "dash"), width=3 if k == "실적" else 2),
+                marker=dict(size=9 if k == "실적" else 8, symbol=KIND_SYMBOL.get(k, "triangle-up")),
+                text=[f"{v:,.0f}" if v is not None else "" for v in ys], textposition="top center",
+                textfont=dict(size=11, color=C_NAVY), connectgaps=False,
+                hovertemplate="%{x} " + kind_label(k) + "<br>%{y:,.0f}<extra></extra>"))
+        fig.update_layout(title=f"{prod1} — 연도별 공급량 ({period}: {span})", xaxis=dict(type="category"),
+                          xaxis_title="", yaxis_title="", legend_title="", height=460, margin=dict(t=70),
+                          hovermode="x unified")
         fig.update_yaxes(tickformat=",.0f")
         unit_annotation(fig, short_unit)
         st.plotly_chart(style_fig(fig), width="stretch")
@@ -1018,10 +1039,10 @@ def render_supply_analysis(series, short_unit):
         skipped = [f"{y} {kind_label(k)}" for y in sel_years for k in kinds
                    if (k, y) in series and not complete(k, y)]
         if skipped:
-            st.caption(f"※ 1~{n}월 데이터가 모두 없는 항목은 그래프에서 제외했습니다: {', '.join(skipped)}")
+            st.caption(f"※ {span} 데이터가 모두 없는 항목은 그래프에서 제외했습니다: {', '.join(skipped)}")
 
-        st.markdown(f"##### 📋 연도별 용도별 수치 ({period})")
-        cols, head1, head2 = [], "", ""
+        st.markdown(f"##### 📋 연도별 용도별 수치 ({period}: {span})")
+        cols, col_meta, head1, head2 = [], [], "", ""
         for y in sel_years:
             ks = [k for k in kinds if (k, y) in series]
             if not ks:
@@ -1029,18 +1050,25 @@ def render_supply_analysis(series, short_unit):
             head1 += f'<th colspan="{len(ks)}" class="blk">{y}년</th>'
             for i, k in enumerate(ks):
                 head2 += f'<th class="{"blk" if i == 0 else ""}">{kind_label(k)}</th>'
-                df = series[(k, y)]
-                cols.append(df[df['월'] <= n].groupby('그룹')['값'].sum() if complete(k, y) else None)
-        rows = sa_build_rows(cols)
-        # 실적 ÷ 계획 (%) 행: 실적 열에만 표시
-        col_meta = [(k, y) for y in sel_years for k in kinds if (k, y) in series]
+                cols.append(period_simple(k, y))
+                col_meta.append((k, y))
+
+        def cells(fn):
+            return [("-" if c is None else f"{fn(c):,.0f}", "") for c in cols]
+
+        rows = [dict(label="가정용", cls="", cells=cells(lambda c: c["가정용"])),
+                dict(label="산업용", cls="", cells=cells(lambda c: c["산업용"])),
+                dict(label="기타 (소계)", cls="subtotal", cells=cells(lambda c: c["기타"])),
+                dict(label="전체", cls="total", cells=cells(lambda c: c.sum()))]
+        # 실적 ÷ 계획 (%) 행: 선택한 용도 기준, 실적 열에만 표시
         for pk in [k for k in kinds if k != "실적"]:
-            cells = []
+            cs = []
             for (k, y), c in zip(col_meta, cols):
                 pc = cols[col_meta.index((pk, y))] if (pk, y) in col_meta else None
-                ok = k == "실적" and c is not None and pc is not None and pc.sum() != 0
-                cells.append((f"{c.sum() / pc.sum() * 100:,.1f}%" if ok else "-", ""))
-            rows.append(dict(label=f"실적 ÷ {kind_label(pk)}", cls="ratio", cells=cells))
+                a_v, p_v = pick(c), pick(pc)
+                ok = k == "실적" and a_v is not None and p_v not in (None, 0)
+                cs.append((f"{a_v / p_v * 100:,.1f}%" if ok else "-", ""))
+            rows.append(dict(label=f"실적 ÷ {kind_label(pk)} ({prod1})", cls="ratio", cells=cs))
         head = f'<tr><th rowspan="2">구분</th>{head1}</tr><tr>{head2}</tr>'
         sa_render_table(head, rows, short_unit)
     st.markdown("---")
@@ -1055,6 +1083,8 @@ def render_supply_analysis(series, short_unit):
         base = latest_act if latest_act is not None else years[-1]
         years2 = st.multiselect("📅 연도", years, default=[y for y in years if y >= base - 3], key="sa_years2")
 
+    sy = sorted(years2)
+    cby = {y: _blue(i / max(len(sy) - 1, 1)) for i, y in enumerate(sy)}   # 선택 연도 기준 푸른색 그라데이션
     fig2, tbl_rows = go.Figure(), []
     for y in years2:
         for k in kinds_sel:
@@ -1065,7 +1095,7 @@ def render_supply_analysis(series, short_unit):
             name = f"{y} {kind_label(k)}"
             fig2.add_trace(go.Scatter(
                 x=list(range(1, 13)), y=vv.values, name=name, mode="lines+markers",
-                line=dict(color=color_by_year[y], dash=KIND_DASH.get(k, "dash"), width=3 if k == "실적" else 2),
+                line=dict(color=cby[y], dash=KIND_DASH.get(k, "dash"), width=3 if k == "실적" else 2),
                 marker=dict(size=7 if k == "실적" else 6, symbol=KIND_SYMBOL.get(k, "triangle-up")),
                 connectgaps=False, hovertemplate=name + " %{x}월<br>%{y:,.0f}<extra></extra>"))
             tot = vv.sum()
