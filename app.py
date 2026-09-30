@@ -764,6 +764,8 @@ KIND_SYMBOL = {"실적": "circle", "V1": "square", "V2": "diamond"}
 SA_ROWS = ["가정용", "영업/업무용", "산업용", "열병합용", "연료전지", "자가열전용", "열전용설비용(주택외)"]
 SA_AGG = {"가정용", "영업/업무용"}   # 시트상 '소계' 성격의 행 (하위 품목 합산) → 소계 배경색
 
+SA_PLOT_CONFIG = {"scrollZoom": True, "displaylogo": False, "doubleClick": "reset"}
+
 SA_CSS = """
 <style>
 .sa-wrap { overflow-x: auto; margin-bottom: 1rem; }
@@ -999,13 +1001,17 @@ def render_supply_analysis(series, short_unit):
     def _shade(lo, hi, t):
         return "#%02X%02X%02X" % tuple(round(l + (h - l) * t) for l, h in zip(lo, hi))
 
-    def line_color(kind, y):   # 실적 = 붉은색 계열, 계획 = 푸른색 계열 (최근 연도일수록 진하게)
+    def line_color(kind, y):
+        # 기준연도(BASE_YEAR) 실적 = 붉은색(메인), 과거 실적 = 회색 계열, V1 = 로열블루, V2 = 청록빛 블루
         t = sy.index(y) / max(len(sy) - 1, 1)
-        # 실적 = 진한 빨강 / V1 = 로열블루 계열 / V2 = 청록빛 블루 계열 (최근 연도일수록 진하게)
-        ramp = {"실적": ((214, 60, 60), (130, 10, 20)),
-                "V1": ((110, 160, 225), (20, 60, 140)),
+        if kind == "실적":
+            if y == BASE_YEAR:
+                return "#D32F2F"
+            return _shade((185, 192, 202), (85, 95, 110), t)   # 오래된 연도 = 연한 회색 → 최근 = 진한 회색
+        ramp = {"V1": ((110, 160, 225), (20, 60, 140)),
                 "V2": ((95, 195, 215), (10, 105, 135))}.get(kind, ((150, 190, 230), (11, 42, 85)))
         return _shade(ramp[0], ramp[1], t)
+
     fig2, tbl_rows = go.Figure(), []
     for y in years2:
         for k in kinds_sel:
@@ -1016,7 +1022,8 @@ def render_supply_analysis(series, short_unit):
             name = f"{y} {kind_label(k)}"
             fig2.add_trace(go.Scatter(
                 x=list(range(1, 13)), y=vv.values, name=name, mode="lines+markers",
-                line=dict(color=line_color(k, y), dash=KIND_DASH.get(k, "dash"), width=3 if k == "실적" else 2),
+                line=dict(color=line_color(k, y), dash=KIND_DASH.get(k, "dash"),
+                          width=4 if (k == "실적" and y == BASE_YEAR) else (2.5 if k == "실적" else 2)),
                 marker=dict(size=7 if k == "실적" else 6, symbol=KIND_SYMBOL.get(k, "triangle-up")),
                 connectgaps=False, hovertemplate=name + " %{x}월<br>%{y:,.0f}<extra></extra>"))
             tot = vv.sum()
@@ -1031,7 +1038,8 @@ def render_supply_analysis(series, short_unit):
         fig2.update_layout(title=f"{product} — 연도별 월별 공급량",
                            xaxis_title="", yaxis_title="", legend_title="", height=520, hovermode="closest")
         unit_annotation(fig2, short_unit)
-        st.plotly_chart(style_fig(fig2), width="stretch")
+        fig2.update_layout(dragmode="pan")   # 드래그 = 이동, 마우스 휠 = 확대/축소 (더블클릭 = 원래대로)
+        st.plotly_chart(style_fig(fig2), width="stretch", config=SA_PLOT_CONFIG)
 
         st.markdown(f"##### 📋 {product} — 연도별 월별 수치")
         head = ("<tr><th>구분</th>" + "".join(f"<th>{m}월</th>" for m in range(1, 13))
@@ -1056,30 +1064,38 @@ def render_supply_analysis(series, short_unit):
         st.info("비교할 구분(실적, 계획 V1, 계획 V2)을 하나 이상 체크해주세요.")
     else:
         SHORT = {"실적": "실적", "V1": "V1", "V2": "V2"}
-        blues = {"가정용": C_NAVY, "산업용": C_UP, "기타": C_DOWN}   # 푸른색 계열
+        # 구분별 색상 계열 (진함=가정용 / 중간=산업용 / 연함=기타): 실적=붉은색, V1=파랑, V2=청록빛 파랑
+        STACK_COLORS = {"실적": ["#9E1B26", "#D05A5A", "#EFA3A3"],
+                        "V1": ["#143C8C", "#3C6EBE", "#96B9E6"],
+                        "V2": ["#0A6987", "#32A0B9", "#8CCDDC"]}
         simple3 = lambda g: g if g in ("가정용", "산업용") else "기타"
         mlabels = [f"{m}월" for m in range(1, 13) for _ in sel3]
         klabels = [SHORT.get(k, k) for _m in range(1, 13) for k in sel3]
 
         fig3 = go.Figure()
-        for g in ["가정용", "산업용", "기타"]:
-            ys = []
-            for m in range(1, 13):
-                for k in sel3:
-                    df3 = series[(k, y3)]
-                    if m not in set(sa_avail_months(df3)):
-                        ys.append(None)
-                        continue
-                    d = df3[df3['월'] == m]
-                    ys.append(float(d[d['그룹'].map(simple3) == g]['값'].sum()))
-            fig3.add_trace(go.Bar(name=g, x=[mlabels, klabels], y=ys, marker_color=blues[g],
-                                  hovertemplate=g + " %{x}<br>%{y:,.0f}<extra></extra>"))
+        for k in sel3:
+            df3 = series[(k, y3)]
+            av_k = set(sa_avail_months(df3))
+            pal = STACK_COLORS.get(k, STACK_COLORS["V1"])
+            for gi, g in enumerate(["가정용", "산업용", "기타"]):
+                ys = []
+                for m in range(1, 13):
+                    for kk in sel3:
+                        if kk != k or m not in av_k:
+                            ys.append(None)
+                            continue
+                        d = df3[df3['월'] == m]
+                        ys.append(float(d[d['그룹'].map(simple3) == g]['값'].sum()))
+                nm = f"{SHORT.get(k, k)} · {g}"
+                fig3.add_trace(go.Bar(name=nm, legendgroup=k, x=[mlabels, klabels], y=ys, marker_color=pal[gi],
+                                      hovertemplate=nm + " %{x}<br>%{y:,.0f}<extra></extra>"))
         names = " · ".join(kind_label(k) for k in sel3)
         fig3.update_layout(barmode="stack", title=f"{y3}년 월별 공급량 — {names} (가정용·산업용·기타)",
                            xaxis_title="", yaxis_title="", legend_title="", height=500, bargap=0.15)
         fig3.update_yaxes(tickformat=",.0f")
         unit_annotation(fig3, short_unit)
-        st.plotly_chart(style_fig(fig3), width="stretch")
+        fig3.update_layout(dragmode="pan")
+        st.plotly_chart(style_fig(fig3), width="stretch", config=SA_PLOT_CONFIG)
 
         for k in sel3:
             df3 = series[(k, y3)]
