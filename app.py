@@ -1314,7 +1314,7 @@ def render_supply_page(actual, plan_long, info, factor, short_unit):
 # ─────────────────────────────────────────────────────────
 def main():
     st.title(f"📈 {PLAN_YEAR}년 사업계획 at a glance")
-    st.caption(f"{BASE_YEAR}년 계획 대비 실적 · {BASE_YEAR}년 실적 대비 {PLAN_YEAR}년 계획량 비교")
+    sub_ph = st.empty()   # 탭별 소제목 (메뉴 선택 후 채움)
 
     TAB1 = f"1. One page review({BASE_YEAR}년 실적)"
     TAB2 = f"2. One page review({PLAN_YEAR}년 계획)"
@@ -1357,6 +1357,17 @@ def main():
         st.subheader("📂 계획 데이터 업로드 (3. 세부내용 탭용)")
         up_supply = st.file_uploader("공급량 데이터 업로드 (새 파일이 있으면 우선 반영됩니다)", type=["xlsx", "csv"])
         st.caption("1·2·4번 탭은 업로드 없이 구글시트만 사용합니다.")
+
+    SUBTITLES = {
+        TAB1: (f"{BASE_YEAR}년 계획 대비 실적", f"{BASE_YEAR}년 계획(제출·마케팅팀)과 {BASE_YEAR}년 실적(예상)을 비교합니다."),
+        TAB2: (f"{BASE_YEAR}년 실적 대비 {PLAN_YEAR}년 계획", f"{BASE_YEAR}년 실적(예상)과 {PLAN_YEAR}년 사업계획을 비교합니다."),
+        TAB3: ("연도별 용도별 세부내용", "실적·계획·예상실적·당초·실천 값을 연도별/용도별로 확인합니다."),
+        TAB4: ("공급량 분석", "과거 실적과 계획(V1·V2)을 연도·월별로 비교합니다."),
+    }
+    sub_t, sub_c = SUBTITLES[menu]
+    with sub_ph.container():
+        st.subheader(sub_t)
+        st.caption(sub_c)
 
     need_excel = menu == TAB3
 
