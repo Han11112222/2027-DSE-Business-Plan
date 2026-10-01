@@ -1115,6 +1115,23 @@ def render_supply_analysis(series, short_unit):
         unit_annotation(fig3, short_unit)
         fig3.update_layout(dragmode="pan")
 
+        def ach(pk, g=None):
+            """달성률(%) = 실적 ÷ 계획. 실적이 있는 달만 같은 기간으로 비교 (g: 가정용/산업용/기타, None=전체)"""
+            a_df, p_df = series.get(("실적", y3)), series.get((pk, y3))
+            if a_df is None or p_df is None:
+                return None
+            av = set(sa_avail_months(a_df))
+            if not av:
+                return None
+
+            def tot(df):
+                d = df[df['월'].isin(av)]
+                if g:
+                    d = d[d['그룹'].map(simple3) == g]
+                return float(d['값'].sum())
+            p = tot(p_df)
+            return tot(a_df) / p * 100 if p else None
+
         # 좌측: 전체 누계 (선택한 구분별 합계, 가정용·산업용·기타 스택)
         fig_t = go.Figure()
         totals, partial = {}, []
@@ -1130,22 +1147,58 @@ def render_supply_analysis(series, short_unit):
                 fig_t.add_trace(go.Bar(name=f"{SHORT.get(k, k)} · {g}", x=[SHORT.get(k, k)], y=[float(sums.get(g, 0.0))],
                                        marker_color=pal[gi], showlegend=False,
                                        hovertemplate=f"{SHORT.get(k, k)} · {g}<br>%{{y:,.0f}}<extra></extra>"))
+        # 막대 위: 합계 숫자 / x축 라벨: 구분 + 달성률(실적/계획 = %)
+        tick_text = []
         for k in sel3:
             fig_t.add_annotation(x=SHORT.get(k, k), y=totals[k], text=f"<b>{totals[k]:,.0f}</b>", showarrow=False,
-                                 yanchor="bottom", yshift=4, font=dict(size=12, color="#31333F"))
+                                 yanchor="bottom", yshift=4, font=dict(size=10, color="#31333F"))
+            lab = SHORT.get(k, k)
+            if k != "실적" and "실적" in sel3:
+                r = ach(k)
+                if r is not None:
+                    lab += f"<br><span style='color:#C0392B'>실적/{SHORT.get(k, k)}</span><br><b><span style='color:#C0392B'>= {r:,.1f}%</span></b>"
+            tick_text.append(lab)
         fig_t.update_layout(barmode="stack", title=f"{y3}년 전체 누계", xaxis_title="", yaxis_title="",
                             height=500, bargap=0.25, dragmode="pan", margin=dict(t=70))
-        fig_t.update_yaxes(tickformat=",.0f", rangemode="tozero")
-        fig_t.update_xaxes(type="category")
+        fig_t.update_yaxes(tickformat=",.0f", range=[0, max(totals.values()) * 1.22 if totals else 1])
+        fig_t.update_xaxes(type="category", tickmode="array", tickvals=[SHORT.get(k, k) for k in sel3], ticktext=tick_text)
         unit_annotation(fig_t, short_unit)
 
-        col_tot, col_mon = st.columns([1, 3])
+        col_tot, col_mon = st.columns([2, 5])
         with col_tot:
             st.plotly_chart(style_fig(fig_t), width="stretch", config=SA_PLOT_CONFIG)
         with col_mon:
             st.plotly_chart(style_fig(fig3), width="stretch", config=SA_PLOT_CONFIG)
         if partial:
             st.caption("※ 전체 누계는 데이터가 있는 달까지의 합계입니다: " + ", ".join(partial))
+
+        # 달성률 (실적 ÷ 계획 V1 / V2): 월별 + 합계(실적이 있는 달 기준)
+        plan_ks = [k for k in ks3 if k != "실적"]
+        if "실적" in ks3 and plan_ks:
+            st.markdown(f"##### 🎯 {y3}년 달성률 (실적 ÷ 계획)")
+            a_df = series[("실적", y3)]
+            av_a = set(sa_avail_months(a_df))
+            rows_a = []
+            for pk in plan_ks:
+                p_df = series[(pk, y3)]
+                for gname in ["전체", "가정용", "산업용", "기타"]:
+                    gg = None if gname == "전체" else gname
+                    cs = []
+                    for m in range(1, 13):
+                        da, dp = a_df[a_df['월'] == m], p_df[p_df['월'] == m]
+                        if gg:
+                            da, dp = da[da['그룹'].map(simple3) == gg], dp[dp['그룹'].map(simple3) == gg]
+                        pv = float(dp['값'].sum())
+                        cs.append((f"{float(da['값'].sum()) / pv * 100:,.1f}%" if (m in av_a and pv) else "-", ""))
+                    r = ach(pk, gg)
+                    cs.append((f"{r:,.1f}%" if r is not None else "-", "tcol"))
+                    rows_a.append(dict(label=f"실적/{SHORT.get(pk, pk)} · {gname}", cls="total" if gname == "전체" else "",
+                                       cells=cs))
+            head_a = ("<tr><th>구분</th>" + "".join(f"<th>{m}월</th>" for m in range(1, 13))
+                      + "<th>합계</th></tr>")
+            sa_render_table(head_a, rows_a, "%")
+            if len(av_a) < 12:
+                st.caption(f"※ 합계 달성률은 실적이 있는 달({min(av_a)}월~{max(av_a)}월) 기준으로 계획과 같은 기간끼리 비교한 값입니다.")
 
         for k in sel3:
             df3 = series[(k, y3)]
