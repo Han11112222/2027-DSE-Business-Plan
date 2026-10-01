@@ -588,9 +588,14 @@ def render_one_page_review(page, actual, plan_long, factor, short_unit):
         delta = None
         if base and available[base] and totals[base] != 0:
             d = totals[key] - totals[base]
-            delta = f"{d:,.0f} ({totals[key] / totals[base] * 100:.1f}%) vs {base}"
+            delta = f"{d:,.0f} ({totals[key] / totals[base] * 100:.1f}%)"
         col.metric(label, f"{totals[key]:,.0f} {short_unit}", delta=delta)
 
+    st.markdown("""<style>
+    div[data-testid="stMetricDelta"] { padding: 4px 12px; border-radius: 16px; }
+    div[data-testid="stMetricDelta"] * { font-size: 1.25rem !important; font-weight: 700 !important; }
+    div[data-testid="stMetricDelta"] svg { width: 1.3rem; height: 1.3rem; }
+    </style>""", unsafe_allow_html=True)
     mcols = st.columns(4)
     metric(mcols[0], "①")
     metric(mcols[1], "②", "①")
