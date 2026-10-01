@@ -1147,24 +1147,24 @@ def render_supply_analysis(series, short_unit):
                 fig_t.add_trace(go.Bar(name=f"{SHORT.get(k, k)} · {g}", x=[SHORT.get(k, k)], y=[float(sums.get(g, 0.0))],
                                        marker_color=pal[gi], showlegend=False,
                                        hovertemplate=f"{SHORT.get(k, k)} · {g}<br>%{{y:,.0f}}<extra></extra>"))
-        # 막대 위: 합계 숫자 / x축 라벨: 구분 + 달성률(실적/계획 = %)
-        tick_text = []
+        # 막대 위: 합계 숫자(15px) + 그 위에 달성률(실적/계획 = %, 큰 글씨)
         for k in sel3:
             fig_t.add_annotation(x=SHORT.get(k, k), y=totals[k], text=f"<b>{totals[k]:,.0f}</b>", showarrow=False,
-                                 yanchor="bottom", yshift=4, font=dict(size=10, color="#31333F"))
-            lab = SHORT.get(k, k)
+                                 yanchor="bottom", yshift=4, font=dict(size=15, color="#31333F"))
             if k != "실적" and "실적" in sel3:
                 r = ach(k)
                 if r is not None:
-                    lab += f"<br><span style='color:#C0392B'>실적/{SHORT.get(k, k)}</span><br><b><span style='color:#C0392B'>= {r:,.1f}%</span></b>"
-            tick_text.append(lab)
+                    fig_t.add_annotation(
+                        x=SHORT.get(k, k), y=totals[k], showarrow=False, yanchor="bottom", yshift=28,
+                        text=f"<span style='font-size:12px'>실적/{SHORT.get(k, k)} =</span><br><b>{r:,.1f}%</b>",
+                        font=dict(size=20, color="#C0392B"), align="center")
         fig_t.update_layout(barmode="stack", title=f"{y3}년 전체 누계", xaxis_title="", yaxis_title="",
                             height=500, bargap=0.25, dragmode="pan", margin=dict(t=70))
-        fig_t.update_yaxes(tickformat=",.0f", range=[0, max(totals.values()) * 1.22 if totals else 1])
-        fig_t.update_xaxes(type="category", tickmode="array", tickvals=[SHORT.get(k, k) for k in sel3], ticktext=tick_text)
+        fig_t.update_yaxes(tickformat=",.0f", range=[0, max(totals.values()) * 1.32 if totals else 1])
+        fig_t.update_xaxes(type="category")
         unit_annotation(fig_t, short_unit)
 
-        col_tot, col_mon = st.columns([2, 5])
+        col_tot, col_mon = st.columns([4, 7])
         with col_tot:
             st.plotly_chart(style_fig(fig_t), width="stretch", config=SA_PLOT_CONFIG)
         with col_mon:
