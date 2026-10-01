@@ -298,10 +298,11 @@ def style_fig(fig):
     return fig
 
 
-def draw_waterfall(df_chart, base, target, short_unit, title=None):
+def draw_waterfall(df_chart, base, target, short_unit, title=None, names=None):
+    names = names or SERIES_FULL
     base_tot, tgt_tot = df_chart[base].sum(), df_chart[target].sum()
     diffs = (df_chart[target] - df_chart[base]).tolist()
-    labels = [SERIES_FULL[base]] + [DISPLAY_NAME.get(g, g) for g in df_chart.index] + [SERIES_FULL[target]]
+    labels = [names[base]] + [DISPLAY_NAME.get(g, g) for g in df_chart.index] + [names[target]]
 
     fig = go.Figure(go.Waterfall(
         orientation="v",
@@ -328,7 +329,7 @@ def draw_waterfall(df_chart, base, target, short_unit, title=None):
     fig.update_yaxes(range=[max(0, y_min - pad), y_max + pad], tickformat=",.0f")
 
     fig.update_layout(
-        title=title or f"{SERIES_FULL[base]} → {SERIES_FULL[target]} 용도별 증감 브릿지",
+        title=title or f"{names[base]} → {names[target]} 용도별 증감 브릿지",
         margin=dict(t=70, b=40), height=440, showlegend=False,
     )
 
@@ -343,7 +344,7 @@ def draw_waterfall(df_chart, base, target, short_unit, title=None):
         badge, badge_color = "[변동 없음]", "#555555"
     fig.add_annotation(
         x=labels[-1], y=tgt_tot, xref="x", yref="y", yanchor="bottom", yshift=30, showarrow=False,
-        text=f"<b>{badge}</b><br><span style='font-size:13px; color:gray'>{SERIES_FULL[base]} 대비 {rate:.1f}%</span>",
+        text=f"<b>{badge}</b><br><span style='font-size:13px; color:gray'>{names[base]} 대비 {rate:.1f}%</span>",
         font=dict(size=17, color=badge_color), align="center",
     )
     fig.update_layout(margin=dict(t=70, b=40, r=60))
@@ -351,11 +352,12 @@ def draw_waterfall(df_chart, base, target, short_unit, title=None):
     return style_fig(fig)
 
 
-def draw_bullet_chart(df_data, base, target, short_unit, show_legend=False):
+def draw_bullet_chart(df_data, base, target, short_unit, show_legend=False, names=None):
+    names = names or SERIES_FULL
     fig = go.Figure()
-    fig.add_trace(go.Bar(y=df_data.index, x=df_data['기준'], name=SERIES_FULL[base], orientation='h',
+    fig.add_trace(go.Bar(y=df_data.index, x=df_data['기준'], name=names[base], orientation='h',
                          marker_color=C_BASE_BAR, width=0.8, hoverinfo='x+name'))
-    fig.add_trace(go.Bar(y=df_data.index, x=df_data['대상'], name=SERIES_FULL[target], orientation='h',
+    fig.add_trace(go.Bar(y=df_data.index, x=df_data['대상'], name=names[target], orientation='h',
                          marker_color=C_UP, width=0.5,
                          text=[f"<b>{v:,.0f}</b>" for v in df_data['대상']], textposition='outside',
                          textfont=dict(size=14, color='black'), hoverinfo='x+name'))
@@ -394,12 +396,12 @@ def comparison_selector(label, options, key, default=("④", "②")):
 
 
 # ─────────────────────────────────────────────────────────
-# 🟢 5. 비교 요약표 (엑셀 양식과 동일 구조)
+# 🟢 5. 비교 요약표 (엑셀 양식과 동일 구조 · 1번/2번 탭 공용)
 # ─────────────────────────────────────────────────────────
 TABLE_CSS = """
 <style>
 .glance-wrap { overflow-x: auto; margin-bottom: 1rem; }
-.glance { width: 100%; min-width: 1150px; border-collapse: collapse; font-family: sans-serif; font-size: 14px; }
+.glance { width: 100%; min-width: 760px; border-collapse: collapse; font-family: sans-serif; font-size: 14px; }
 .glance th, .glance td { border: 1px solid #d0d4da; padding: 7px 9px; color: #31333F; }
 .glance thead th { background: #FFF2CC; text-align: center; font-weight: 600; }
 .glance tbody td { text-align: right; background: #ffffff; }
@@ -415,15 +417,18 @@ TABLE_CSS = """
 </style>
 """
 
+PLAN_VER_NAME = {"V1": "제출", "V2": "마케팅팀"}
 
-def value_cells(vals, available):
+
+def value_cells(vals, available, cfg):
+    keys, comps = cfg["keys"], cfg["comps"]
     cells = []
-    for i, key in enumerate(["①", "②", "③", "④"]):
-        cls = (["blk"] if i == 0 else []) + (["strong"] if key == "④" else [])
+    for i, key in enumerate(keys):
+        cls = (["blk"] if i == 0 else []) + (["strong"] if key == keys[-1] else [])
         txt = f"{vals[key]:,.0f}" if available[key] else "-"
         cells.append(f'<td class="{" ".join(cls)}">{txt}</td>')
 
-    for i, (tgt, base) in enumerate(COMPARISONS):
+    for i, (tgt, base) in enumerate(comps):
         cls = ["blk"] if i == 0 else []
         if available[tgt] and available[base]:
             d = vals[tgt] - vals[base]
@@ -433,48 +438,47 @@ def value_cells(vals, available):
             txt = "-"
         cells.append(f'<td class="{" ".join(cls)}">{txt}</td>')
 
-    for i, (tgt, base) in enumerate(COMPARISONS):
-        cls = (["blk"] if i == 0 else []) + (["strong"] if (tgt, base) == ("④", "③") else [])
+    for i, (tgt, base) in enumerate(comps):
+        cls = (["blk"] if i == 0 else []) + ["strong"]
         ok = available[tgt] and available[base] and vals[base] != 0
         txt = f"{vals[tgt] / vals[base] * 100:,.1f}%" if ok else "-"
         cells.append(f'<td class="{" ".join(cls)}">{txt}</td>')
     return "".join(cells)
 
 
-def render_glance_table(df_detail, available, short_unit):
+def render_glance_table(df_detail, available, short_unit, cfg):
+    keys, comps = cfg["keys"], cfg["comps"]
     bold = lambda s, on: f"<b>{s}</b>" if on else s
     head = (
         '<thead><tr>'
         '<th rowspan="2" colspan="2">구분</th>'
-        f'<th colspan="2" class="blk">{BASE_YEAR}년</th>'
-        f'<th colspan="2">{PLAN_YEAR}년</th>'
-        '<th colspan="4" class="blk">증감</th>'
-        '<th colspan="4" class="blk">대비</th>'
+        + "".join(f'<th colspan="{len(ks)}" class="{"blk" if gi == 0 else ""}">{t}</th>'
+                  for gi, (t, ks) in enumerate(cfg["groups"]))
+        + f'<th colspan="{len(comps)}" class="blk">증감</th>'
+        + f'<th colspan="{len(comps)}" class="blk">대비</th>'
         '</tr><tr>'
-        + "".join(f'<th class="{"blk" if k == "①" else ""}">{bold(SERIES_HEADER[k], k == "④")}</th>'
-                  for k in ["①", "②", "③", "④"])
-        + "".join(f'<th class="{"blk" if i == 0 else ""}">{t}-{b}</th>' for i, (t, b) in enumerate(COMPARISONS))
-        + "".join(f'<th class="{"blk" if i == 0 else ""}">{bold(f"{t}/{b}", (t, b) == ("④", "③"))}</th>'
-                  for i, (t, b) in enumerate(COMPARISONS))
+        + "".join(f'<th class="{"blk" if i == 0 else ""}">{bold(cfg["headers"][k], k == keys[-1])}</th>'
+                  for i, k in enumerate(keys))
+        + "".join(f'<th class="{"blk" if i == 0 else ""}">{t}-{b}</th>' for i, (t, b) in enumerate(comps))
+        + "".join(f'<th class="{"blk" if i == 0 else ""}">{bold(f"{t}/{b}", True)}</th>'
+                  for i, (t, b) in enumerate(comps))
         + '</tr></thead>'
     )
+    vc = lambda vals: value_cells(vals, available, cfg)
 
     rows = []
     for g in [g for g in df_detail.index if g not in TRANSPORT_GROUPS]:
-        rows.append(f'<tr><td class="label" colspan="2">{DISPLAY_NAME.get(g, g)}</td>'
-                    f'{value_cells(df_detail.loc[g], available)}</tr>')
-    rows.append(f'<tr><td class="label" rowspan="3">수송용</td><td class="label">CNG</td>'
-                f'{value_cells(df_detail.loc["CNG"], available)}</tr>')
-    rows.append(f'<tr><td class="label">BIO</td>{value_cells(df_detail.loc["BIO"], available)}</tr>')
-    rows.append(f'<tr class="subtotal"><td class="label">소계</td>'
-                f'{value_cells(df_detail.loc[TRANSPORT_GROUPS].sum(), available)}</tr>')
+        rows.append(f'<tr><td class="label" colspan="2">{DISPLAY_NAME.get(g, g)}</td>{vc(df_detail.loc[g])}</tr>')
+    rows.append(f'<tr><td class="label" rowspan="3">수송용</td><td class="label">CNG</td>{vc(df_detail.loc["CNG"])}</tr>')
+    rows.append(f'<tr><td class="label">BIO</td>{vc(df_detail.loc["BIO"])}</tr>')
+    rows.append(f'<tr class="subtotal"><td class="label">소계</td>{vc(df_detail.loc[TRANSPORT_GROUPS].sum())}</tr>')
 
     total = df_detail.sum()
-    rows.append(f'<tr class="total"><td class="label" colspan="2">합계</td>{value_cells(total, available)}</tr>')
-    rows.append('<tr class="spacer"><td colspan="14"></td></tr>')
+    rows.append(f'<tr class="total"><td class="label" colspan="2">합계</td>{vc(total)}</tr>')
+    rows.append(f'<tr class="spacer"><td colspan="{2 + len(keys) + 2 * len(comps)}"></td></tr>')
     home, ind = df_detail.loc["가정용"], df_detail.loc["산업용"]
     for name, vals in [("가정용", home), ("산업용", ind), ("기타", total - home - ind)]:
-        rows.append(f'<tr class="total"><td class="label" colspan="2">{name}</td>{value_cells(vals, available)}</tr>')
+        rows.append(f'<tr class="total"><td class="label" colspan="2">{name}</td>{vc(vals)}</tr>')
 
     st.markdown(
         TABLE_CSS
@@ -485,21 +489,82 @@ def render_glance_table(df_detail, available, short_unit):
 
 
 # ─────────────────────────────────────────────────────────
-# 🟢 6. 탭 1 — One Page Review
+# 🟢 6. 탭 1·2 — One Page Review (구글시트 실적·계획 사용)
+#     page 1: 2026 계획 vs 2026 실적 / page 2: 2026 실적 vs 2027 계획
 # ─────────────────────────────────────────────────────────
-def render_one_page_review(data, factor, short_unit):
-    series = {k: scale(v, factor) for k, v in data["series"].items()}
+def op_config(page, ver):
+    vn = PLAN_VER_NAME.get(ver, ver)
+    act_name = f"{BASE_YEAR} 실적(예상)"
+    if page == 1:
+        return dict(
+            keys=["①", "②"], comps=[("②", "①")],
+            names={"①": f"{BASE_YEAR} 계획({vn})", "②": act_name},
+            headers={"①": "① 계획", "②": "② 실적"},
+            groups=[(f"{BASE_YEAR}년", ["①", "②"])],
+            wf_title=f"① {BASE_YEAR}년 계획({vn}) 대비 실적",
+            table_title=f"🚥 {BASE_YEAR}년 계획·실적 요약표",
+            plan_year=BASE_YEAR,
+        )
+    return dict(
+        keys=["①", "②"], comps=[("②", "①")],
+        names={"①": act_name, "②": f"{PLAN_YEAR} 계획({vn})"},
+        headers={"①": "① 실적", "②": "② 계획"},
+        groups=[(f"{BASE_YEAR}년", ["①"]), (f"{PLAN_YEAR}년", ["②"])],
+        wf_title=f"① {BASE_YEAR}년 실적 대비 {PLAN_YEAR}년 계획({vn})",
+        table_title=f"🚥 {BASE_YEAR}년 실적 vs {PLAN_YEAR}년 사업계획 요약표",
+        plan_year=PLAN_YEAR,
+    )
+
+
+def op_series(page, actual, plan_long, ver):
+    empty = pd.DataFrame(columns=['월', '그룹', '값'])
+    cfg = op_config(page, ver)
+
+    def plan_of(year):
+        if plan_long is None or plan_long.empty:
+            return empty
+        d = plan_long[(plan_long['연'] == year) & (plan_long['버전'] == ver)]
+        return d[['월', '그룹', '값']]
+
+    act = actual[actual['연'] == BASE_YEAR][['월', '그룹', '값']] if actual is not None and not actual.empty else empty
+    return {"①": plan_of(BASE_YEAR), "②": act} if page == 1 else {"①": act, "②": plan_of(PLAN_YEAR)}
+
+
+def render_one_page_review(page, actual, plan_long, factor, short_unit):
+    pk = f"op{page}"
+    py = BASE_YEAR if page == 1 else PLAN_YEAR
+    vers = set(plan_long[plan_long['연'] == py]['버전']) if plan_long is not None and not plan_long.empty else set()
+    base_ver = "V1" if "V1" in vers or not vers else sorted(vers)[0]
+
+    notice = st.container()
+    h_col, t_col = st.columns([3, 1])
+    h_col.markdown("#### 📌 핵심 지표")
+    use_mkt = t_col.toggle("마케팅팀 계획", value=False, key=f"{pk}_mkt", disabled="V2" not in vers,
+                           help=f"{py}년 계획을 마케팅팀 버전(V2)으로 바꿔서 봅니다. 기본값은 제출 계획(V1)입니다."
+                                + ("" if "V2" in vers else f"\n\n계획 시트에 {py}년 마케팅팀 계획이 아직 없습니다."))
+    ver = "V2" if (use_mkt and "V2" in vers) else base_ver
+    cfg = op_config(page, ver)
+    keys, names = cfg["keys"], cfg["names"]
+
+    series = {k: scale(v, factor) for k, v in op_series(page, actual, plan_long, ver).items()}
     available = {k: not v.empty and v['값'].sum() != 0 for k, v in series.items()}
 
+    with notice:
+        if not any(available.values()):
+            st.warning("데이터가 부족합니다. 사이드바의 실적/계획 구글시트 주소와 공유 설정을 확인해주세요.")
+        else:
+            missing = [names[k] for k, ok in available.items() if not ok]
+            if missing:
+                st.info(f"💡 아직 데이터가 없는 항목: **{', '.join(missing)}** — 표에는 '-'로 표시되고 관련 비교는 생략됩니다.")
+        act_df = actual[actual['연'] == BASE_YEAR] if actual is not None and not actual.empty else None
+        if act_df is not None and not act_df.empty:
+            av = sa_avail_months(act_df)
+            if av and max(av) < 12:
+                st.caption(f"ℹ️ {BASE_YEAR}년 실적은 1월–{max(av)}월 데이터만 반영되어 있습니다 (시트에 입력된 만큼).")
     if not any(available.values()):
-        st.warning("데이터가 부족합니다. 사업계획 / 실천사업계획 / 실적 데이터를 확인해주세요.")
         return
 
-    missing = [SERIES_FULL[k] for k, ok in available.items() if not ok]
-    if missing:
-        st.info(f"💡 아직 데이터가 없는 항목: **{', '.join(missing)}** — 표에는 '-'로 표시되고 관련 비교는 생략됩니다.")
-
-    df_detail = pd.DataFrame({k: v.groupby('그룹')['값'].sum() for k, v in series.items()}).fillna(0)
+    df_detail = pd.DataFrame({k: v.groupby('그룹')['값'].sum() for k, v in series.items()}).reindex(columns=keys).fillna(0)
     extras = sorted(g for g in df_detail.index if g not in DETAIL_ORDER)
     df_detail = df_detail.reindex(DETAIL_ORDER + extras).fillna(0)
 
@@ -510,60 +575,46 @@ def render_one_page_review(data, factor, short_unit):
                                  if g in df_chart.index])
 
     totals = df_detail.sum()
-    valid_comps = [(t, b) for t, b in COMPARISONS if available[t] and available[b]]
+    valid_comps = [(t, b) for t, b in cfg["comps"] if available[t] and available[b]]
 
     # ── 1. 핵심 지표 ──
-    st.markdown("#### 📌 핵심 지표")
-
     def metric(col, key, base=None):
+        label = f"{key} {names[key]}"
         if not available[key]:
-            col.metric(f"{key} {SERIES_FULL[key]}", "-")
+            col.metric(label, "-")
             return
         delta = None
         if base and available[base] and totals[base] != 0:
             d = totals[key] - totals[base]
             delta = f"{d:,.0f} ({totals[key] / totals[base] * 100:.1f}%) vs {base}"
-        col.metric(f"{key} {SERIES_FULL[key]}", f"{totals[key]:,.0f} {short_unit}", delta=delta)
+        col.metric(label, f"{totals[key]:,.0f} {short_unit}", delta=delta)
 
-    c1, c2, c3, c4 = st.columns(4)
-    metric(c1, "①")
-    metric(c2, "②", "①")
-    metric(c3, "③", "②")
-    metric(c4, "④", "②")
+    mcols = st.columns(4)
+    metric(mcols[0], "①")
+    metric(mcols[1], "②", "①")
     st.markdown("---")
 
-    # ── 2. 폭포수 차트 2종 ──
+    # ── 2. 폭포수 차트 ──
     st.markdown("#### 🌊 용도별 증감 요인 폭포수 차트")
-
-    st.markdown(f"##### ① {BASE_YEAR}년 계획 대비 실적")
-    if available["①"] and available["②"]:
-        st.plotly_chart(draw_waterfall(df_chart, "①", "②", short_unit), width="stretch")
+    st.markdown(f"##### {cfg['wf_title']}")
+    if valid_comps:
+        st.plotly_chart(draw_waterfall(df_chart, "①", "②", short_unit, names=names), width="stretch")
+    elif page == 2:
+        st.info(f"💡 {PLAN_YEAR}년 계획 데이터(계획 시트 하단에 '{PLAN_YEAR}년' 블록)가 들어오면 표시됩니다.")
     else:
         st.info(f"{BASE_YEAR}년 계획 또는 실적 데이터가 없습니다.")
-
-    st.markdown(f"##### ② {BASE_YEAR}년 실적 대비 {PLAN_YEAR}년 계획")
-    plan_keys = [k for k in ["④", "③"] if available[k]]
-    if available["②"] and plan_keys:
-        if len(plan_keys) > 1:
-            pk = st.radio(f"{PLAN_YEAR}년 계획 기준", plan_keys, horizontal=True, key="wf_plan27",
-                          format_func=lambda k: SERIES_FULL[k])
-        else:
-            pk = plan_keys[0]
-        st.plotly_chart(draw_waterfall(df_chart, "②", pk, short_unit), width="stretch")
-    else:
-        st.info(f"💡 {PLAN_YEAR}년 계획 데이터(사업계획 / 실천사업계획 시트의 {PLAN_YEAR}년 행)가 들어오면 표시됩니다.")
     st.markdown("---")
 
     # ── 3. 비교 요약표 ──
-    st.markdown(f"#### 🚥 {BASE_YEAR}년 계획·실적 vs {PLAN_YEAR}년 사업계획 요약표")
-    render_glance_table(df_detail, available, short_unit)
+    st.markdown(f"#### {cfg['table_title']}")
+    render_glance_table(df_detail, available, short_unit, cfg)
     st.markdown("---")
 
     # ── 4. 불릿 차트 ──
     if not valid_comps:
         return
     st.markdown("#### 🎯 용도별 세부 비교")
-    t, b = comparison_selector("비교 기준 선택 (세부 비교)", valid_comps, "bullet_comp")
+    t, b = valid_comps[0]
 
     df_perf = df_chart[[b, t]].copy()
     df_perf.columns = ['기준', '대상']
@@ -581,10 +632,10 @@ def render_one_page_review(data, factor, short_unit):
     part2 = df_perf.loc[others_mask].sort_values('대상', ascending=True)
 
     st.markdown("##### 📌 [요약 (분류 변경)]")
-    st.plotly_chart(draw_bullet_chart(part1, b, t, short_unit, show_legend=True), width="stretch")
+    st.plotly_chart(draw_bullet_chart(part1, b, t, short_unit, show_legend=True, names=names), width="stretch")
     if not part2.empty:
         st.markdown("##### 📌 [세부용도 (기타 용도 나타냄)]")
-        st.plotly_chart(draw_bullet_chart(part2, b, t, short_unit), width="stretch")
+        st.plotly_chart(draw_bullet_chart(part2, b, t, short_unit, names=names), width="stretch")
 
 
 # ─────────────────────────────────────────────────────────
@@ -1210,28 +1261,24 @@ def render_supply_analysis(series, short_unit):
             sa_render_table(head, sa_build_rows(cols3, tcols={12}), short_unit)
 
 
-def render_supply_page(data_dict, gs_long, plan_url, plan_status, factor, short_unit):
-    """3번 탭: 실적(구글시트) + 계획(구글시트)만으로 구성. 엑셀 업로드는 필요 없음"""
-    # 실적 = '2. 세부내용'과 동일 기준 (구글시트 우선, 엑셀이 있으면 구글시트에 없는 연·월만 보충)
-    if data_dict:
-        actual = assemble_data(data_dict, gs_long)["actual"]
-    else:
-        actual = gs_long
-    if actual is None or actual.empty:
-        st.error("실적 데이터를 불러오지 못했습니다. 사이드바의 구글시트 주소/공유 설정을 확인해주세요.")
-        return
-
-    plan_long, info = pd.DataFrame(columns=['연', '월', '그룹', '값', '버전']), None
+def load_plan(plan_url, plan_status):
+    """계획 구글시트 → (long DataFrame, 인식 결과 info)  (1·2·4번 탭 공용)"""
+    empty = pd.DataFrame(columns=['연', '월', '그룹', '값', '버전'])
     try:
         plan_long, info = fetch_gsheet_plan(plan_url.strip())
         if plan_long.empty:
-            plan_status.warning("계획 시트에서 값을 찾지 못했습니다. 실적만 표시합니다.")
+            plan_status.warning("계획 시트에서 값을 찾지 못했습니다.")
         else:
             desc = ", ".join(f"{b['연도']} {b['버전']}" for b in info["blocks"])
             plan_status.success(f"✅ 계획 반영: {desc}")
+        return plan_long, info
     except Exception as e:
-        plan_status.warning(f"계획 구글시트 연결 실패 → 실적만 표시합니다.\n\n({type(e).__name__}: {e})")
+        plan_status.warning(f"계획 구글시트 연결 실패\n\n({type(e).__name__}: {e})")
+        return empty, None
 
+
+def render_supply_page(actual, plan_long, info, factor, short_unit):
+    """4번 탭: 실적(구글시트) + 계획(구글시트)만으로 구성"""
     render_supply_analysis(build_sa_series(actual, plan_long, factor), short_unit)
 
     if info:
@@ -1248,9 +1295,14 @@ def main():
     st.title(f"📈 {PLAN_YEAR}년 사업계획 at a glance")
     st.caption(f"{BASE_YEAR}년 계획 대비 실적 · {BASE_YEAR}년 실적 대비 {PLAN_YEAR}년 계획량 비교")
 
+    TAB1 = f"1. One page review({BASE_YEAR}년 실적)"
+    TAB2 = f"2. One page review({PLAN_YEAR}년 계획)"
+    TAB3 = "3. 세부내용"
+    TAB4 = "4. 공급량 분석"
+
     with st.sidebar:
         st.header("⚙️ 메뉴 및 기본 설정")
-        menu = st.radio("📋 보고서 탭 선택", ["1. One page review", "2. 세부내용", "3. 공급량 분석"])
+        menu = st.radio("📋 보고서 탭 선택", [TAB1, TAB2, TAB3, TAB4])
         st.markdown("---")
         unit = st.radio("단위 선택", ["열량 (GJ)", "부피 (천m³)"], index=0)
         heating_value = 42.563
@@ -1265,19 +1317,14 @@ def main():
         gs_status = st.empty()
 
         st.markdown("---")
-        st.subheader("🔗 계획 데이터 (구글시트) · 3번 탭")
+        st.subheader("🔗 계획 데이터 (구글시트) · 1·2·4번 탭")
         plan_url = st.text_input("계획 스프레드시트 주소", value=PLAN_GSHEET_URL)
         if st.button("🔄 계획 새로고침"):
             fetch_gsheet_plan.clear()
         plan_status = st.empty()
 
         st.markdown("---")
-        st.subheader("📂 계획 데이터 업로드 (1·2번 탭용)")
-        up_supply = st.file_uploader("공급량 데이터 업로드 (새 파일이 있으면 우선 반영됩니다)", type=["xlsx", "csv"])
-        st.caption("3. 공급량 분석 탭은 업로드 없이 구글시트만 사용합니다.")
-
-        st.markdown("---")
-        st.subheader("🔗 2026년 실적 추정 (구글시트) · 3번 탭")
+        st.subheader("🔗 2026년 실적 추정 (구글시트)")
         est_url = st.text_input("실적 추정 스프레드시트 주소", value=ACTUAL_EST_GSHEET_URL)
         st.caption("이 시트에 있는 연·월은 위 '실적' 시트 대신 사용되고, 나머지 기간은 '실적' 시트 값을 씁니다. "
                    "주소를 비우면 사용하지 않습니다.")
@@ -1285,12 +1332,17 @@ def main():
             fetch_gsheet_actual.clear()
         est_status = st.empty()
 
-    is_tab3 = menu.startswith("3.")
+        st.markdown("---")
+        st.subheader("📂 계획 데이터 업로드 (3. 세부내용 탭용)")
+        up_supply = st.file_uploader("공급량 데이터 업로드 (새 파일이 있으면 우선 반영됩니다)", type=["xlsx", "csv"])
+        st.caption("1·2·4번 탭은 업로드 없이 구글시트만 사용합니다.")
 
-    # 계획 데이터 (엑셀) — 1·2번 탭 전용 (3번 탭은 없어도 동작)
+    need_excel = menu == TAB3
+
+    # 엑셀 (3. 세부내용 전용)
     default_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), EXCEL_FILE)
     target_file = up_supply if up_supply is not None else (default_file if os.path.exists(default_file) else None)
-    if target_file is None and not is_tab3:
+    if target_file is None and need_excel:
         st.info(f"👈 좌측 사이드바에서 공급량 파일을 업로드하거나, 프로젝트 폴더에 {EXCEL_FILE} 파일을 배치해 주세요.")
         return
     data_dict = load_all_sheets(target_file) if target_file is not None else {}
@@ -1300,48 +1352,57 @@ def main():
     try:
         gs_long = fetch_gsheet_actual(gs_url.strip())
         if gs_long.empty:
-            gs_status.warning("구글시트에서 실적 값을 찾지 못했습니다. 엑셀 실적으로 대체합니다.")
+            gs_status.warning("구글시트에서 실적 값을 찾지 못했습니다.")
         else:
             last = gs_long.loc[gs_long['연'].idxmax(), '연']
             last_m = gs_long[gs_long['연'] == last]['월'].max()
             gs_status.success(f"✅ 실적 반영: {gs_long['연'].min()}-01 ~ {last}-{last_m:02d}")
     except Exception as e:
-        gs_status.warning(f"구글시트 연결 실패 → 엑셀 실적으로 대체합니다.\n\n({type(e).__name__})")
+        gs_status.warning(f"구글시트 연결 실패\n\n({type(e).__name__})")
+
+    # 2026년 실적 추정 시트: 있는 연·월은 이 값으로 덮어씀 (모든 탭 공통)
+    if est_url.strip():
+        try:
+            est_long = fetch_gsheet_actual(est_url.strip())
+            if est_long.empty:
+                est_status.warning("실적 추정 시트에서 값을 찾지 못했습니다. '실적' 시트 값만 사용합니다.\n\n"
+                                   "(C열 '상품' 헤더와 'YYYY-MM' 월 헤더가 있는 양식이어야 합니다)")
+            else:
+                keys = set(zip(est_long['연'], est_long['월']))
+                keep = [(y, m) not in keys for y, m in zip(gs_long['연'], gs_long['월'])]
+                gs_long = pd.concat([gs_long[keep], est_long], ignore_index=True)
+                f_y, l_y = est_long['연'].min(), est_long['연'].max()
+                f_m = est_long.loc[est_long['연'] == f_y, '월'].min()
+                l_m = est_long.loc[est_long['연'] == l_y, '월'].max()
+                est_status.success(f"✅ 실적 추정 반영: {f_y}-{f_m:02d} ~ {l_y}-{l_m:02d}")
+        except Exception as e:
+            est_status.warning(f"실적 추정 구글시트 연결 실패 → '실적' 시트 값만 사용합니다.\n\n({type(e).__name__})")
 
     short_unit = "GJ" if "GJ" in unit else "천m³"
     factor = 1 / 1000 if "GJ" in unit else 1 / heating_value / 1000   # 원자료 MJ 기준
 
-    if is_tab3:
-        if est_url.strip():
-            try:
-                est_long = fetch_gsheet_actual(est_url.strip())
-                if est_long.empty:
-                    est_status.warning("실적 추정 시트에서 값을 찾지 못했습니다. '실적' 시트 값만 사용합니다.\n\n"
-                                       "(C열 '상품' 헤더와 'YYYY-MM' 월 헤더가 있는 양식이어야 합니다)")
-                else:
-                    keys = set(zip(est_long['연'], est_long['월']))
-                    keep = [(y, m) not in keys for y, m in zip(gs_long['연'], gs_long['월'])]
-                    gs_long = pd.concat([gs_long[keep], est_long], ignore_index=True)
-                    f_y, l_y = est_long['연'].min(), est_long['연'].max()
-                    f_m = est_long.loc[est_long['연'] == f_y, '월'].min()
-                    l_m = est_long.loc[est_long['연'] == l_y, '월'].max()
-                    est_status.success(f"✅ 실적 추정 반영: {f_y}-{f_m:02d} ~ {l_y}-{l_m:02d}")
-            except Exception as e:
-                est_status.warning(f"실적 추정 구글시트 연결 실패 → '실적' 시트 값만 사용합니다.\n\n({type(e).__name__})")
-        render_supply_page(data_dict, gs_long, plan_url, plan_status, factor, short_unit)
+    if menu == TAB3:
+        data = assemble_data(data_dict, gs_long)
+        act_months = data["act_months"]
+        if act_months and max(act_months) < 12:
+            st.caption(f"ℹ️ ② {BASE_YEAR} 실적(예상) = 1~{max(act_months)}월 실적 + "
+                       f"{max(act_months) + 1}~12월 실천사업계획")
+        render_detail(data, factor, short_unit)
         return
 
-    data = assemble_data(data_dict, gs_long)
+    # 1·2·4번 탭: 실적·계획 모두 구글시트
+    actual = assemble_data(data_dict, gs_long)["actual"] if data_dict else gs_long
+    if actual is None or actual.empty:
+        st.error("실적 데이터를 불러오지 못했습니다. 사이드바의 구글시트 주소/공유 설정을 확인해주세요.")
+        return
+    plan_long, info = load_plan(plan_url, plan_status)
 
-    act_months = data["act_months"]
-    if act_months and max(act_months) < 12:
-        st.caption(f"ℹ️ ② {BASE_YEAR} 실적(예상) = 1~{max(act_months)}월 실적 + "
-                   f"{max(act_months) + 1}~12월 실천사업계획")
-
-    if menu == "1. One page review":
-        render_one_page_review(data, factor, short_unit)
+    if menu == TAB1:
+        render_one_page_review(1, actual, plan_long, factor, short_unit)
+    elif menu == TAB2:
+        render_one_page_review(2, actual, plan_long, factor, short_unit)
     else:
-        render_detail(data, factor, short_unit)
+        render_supply_page(actual, plan_long, info, factor, short_unit)
 
 
 if __name__ == "__main__":
