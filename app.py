@@ -541,9 +541,7 @@ def render_one_page_review(page, actual, plan_long, factor, short_unit):
     h_col.markdown("#### 📌 핵심 지표")
     if page == 1:   # 2026년만 제출(V1)/마케팅팀(V2) 계획이 있음
         base_ver = "V1" if "V1" in vers or not vers else sorted(vers)[0]
-        use_mkt = t_col.toggle("마케팅팀 계획", value=False, key=f"{pk}_mkt", disabled="V2" not in vers,
-                               help=f"{py}년 계획을 마케팅팀 버전(V2)으로 바꿔서 봅니다. 기본값은 제출 계획(V1)입니다."
-                                    + ("" if "V2" in vers else f"\n\n계획 시트에 {py}년 마케팅팀 계획이 아직 없습니다."))
+        use_mkt = t_col.toggle("마케팅팀 계획", value=False, key=f"{pk}_mkt", disabled="V2" not in vers)
         ver = "V2" if (use_mkt and "V2" in vers) else base_ver
     else:           # 2027년 계획은 1개 버전
         ver = "V1" if "V1" in vers or not vers else sorted(vers)[0]
@@ -593,22 +591,23 @@ def render_one_page_review(page, actual, plan_long, factor, short_unit):
             delta = f"{d:,.0f} ({totals[key] / totals[base] * 100:.1f}%) vs {base}"
         col.metric(label, f"{totals[key]:,.0f} {short_unit}", delta=delta)
 
-    left, right = st.columns([5, 6])
-    m1, m2 = left.columns(2)
-    metric(m1, "①")
-    metric(m2, "②", "①")
-    if valid_comps:   # 핵심 지표 오른쪽: 가정용 · 산업용 · 기타 요약 폭포수
-        home, ind = df_detail.loc["가정용"], df_detail.loc["산업용"]
-        df3 = pd.DataFrame([home, ind, df_detail.sum() - home - ind], index=["가정용", "산업용", "기타"])
-        right.plotly_chart(draw_waterfall(df3, "①", "②", short_unit, names=names, height=360,
-                                          title="가정용 · 산업용 · 기타 증감 요약"), width="stretch")
+    mcols = st.columns(4)
+    metric(mcols[0], "①")
+    metric(mcols[1], "②", "①")
     st.markdown("---")
 
     # ── 2. 폭포수 차트 ──
     st.markdown("#### 🌊 용도별 증감 요인 폭포수 차트")
-    st.markdown(f"##### {cfg['wf_title']}")
+    wf_h, wf_t = st.columns([3, 1])
+    wf_h.markdown(f"##### {cfg['wf_title']}")
+    simple = wf_t.toggle("심플버전", value=False, key=f"{pk}_simple", disabled=not valid_comps)
     if valid_comps:
-        st.plotly_chart(draw_waterfall(df_chart, "①", "②", short_unit, names=names), width="stretch")
+        if simple:   # 가정용 · 산업용 · 기타 3개로 묶어서 표시
+            home, ind = df_detail.loc["가정용"], df_detail.loc["산업용"]
+            df3 = pd.DataFrame([home, ind, df_detail.sum() - home - ind], index=["가정용", "산업용", "기타"])
+            st.plotly_chart(draw_waterfall(df3, "①", "②", short_unit, names=names, height=380), width="stretch")
+        else:
+            st.plotly_chart(draw_waterfall(df_chart, "①", "②", short_unit, names=names), width="stretch")
     elif page == 2:
         st.info(f"💡 {PLAN_YEAR}년 계획 데이터(계획 시트 하단에 '{PLAN_YEAR}년' 블록)가 들어오면 표시됩니다.")
     else:
