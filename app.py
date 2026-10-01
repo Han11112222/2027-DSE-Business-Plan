@@ -147,6 +147,16 @@ def parse_gsheet_actual(raw):
     if title_rows:
         start = title_rows[0]
         hdr = next((i for i in range(start, min(start + 5, len(raw))) if _norm(raw.iat[i, 2]) == "정산항목"), None)
+    if hdr is None:   # 제목이 없는 간단한 양식(업로드용): '정산항목'/'상품' 헤더 + 'YYYY-MM' 월 헤더가 있는 첫 행
+        month_re = re.compile(r"\d{4}\D+\d{1,2}")
+        for i in range(len(raw)):
+            n_month = sum(1 for j in range(3, raw.shape[1]) if month_re.search(str(raw.iat[i, j])))
+            if n_month >= 1 and _norm(raw.iat[i, 2]) in ("정산항목", "상품", "상품명", "용도", "항목"):
+                hdr = i
+                break
+        if hdr is None:
+            hdr = next((i for i in range(len(raw))
+                        if sum(1 for j in range(3, raw.shape[1]) if month_re.search(str(raw.iat[i, j]))) >= 3), None)
     if hdr is None:
         hdr = GSHEET_HEADER_ROW - 1
 
@@ -983,6 +993,7 @@ def build_sa_series(actual, plan_long, factor):
 # ── 화면 ─────────────────────────────────────────────────
 def render_supply_analysis(series, short_unit):
     st.subheader(f"📊 공급량 분석 — 연도별 실적 vs 당초 계획 ({short_unit})")
+    st.caption("📥 미확정 실적 엑셀 업로드 버튼은 **좌측 사이드바 맨 아래**(스크롤을 끝까지 내리면 보입니다)에 있습니다.")
     if not series:
         st.warning("표시할 실적/계획 데이터가 없습니다.")
         return
