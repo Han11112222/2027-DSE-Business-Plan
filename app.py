@@ -1114,7 +1114,38 @@ def render_supply_analysis(series, short_unit):
         fig3.update_yaxes(tickformat=",.0f")
         unit_annotation(fig3, short_unit)
         fig3.update_layout(dragmode="pan")
-        st.plotly_chart(style_fig(fig3), width="stretch", config=SA_PLOT_CONFIG)
+
+        # 좌측: 전체 누계 (선택한 구분별 합계, 가정용·산업용·기타 스택)
+        fig_t = go.Figure()
+        totals, partial = {}, []
+        for k in sel3:
+            df_k = series[(k, y3)]
+            av_k = sa_avail_months(df_k)
+            if len(av_k) < 12:
+                partial.append(f"{SHORT.get(k, k)} {max(av_k)}월까지" if av_k else SHORT.get(k, k))
+            pal = STACK_COLORS.get(k, STACK_COLORS["V1"])
+            sums = df_k.groupby(df_k['그룹'].map(simple3))['값'].sum()
+            totals[k] = float(sums.sum())
+            for gi, g in enumerate(["가정용", "산업용", "기타"]):
+                fig_t.add_trace(go.Bar(name=f"{SHORT.get(k, k)} · {g}", x=[SHORT.get(k, k)], y=[float(sums.get(g, 0.0))],
+                                       marker_color=pal[gi], showlegend=False,
+                                       hovertemplate=f"{SHORT.get(k, k)} · {g}<br>%{{y:,.0f}}<extra></extra>"))
+        for k in sel3:
+            fig_t.add_annotation(x=SHORT.get(k, k), y=totals[k], text=f"<b>{totals[k]:,.0f}</b>", showarrow=False,
+                                 yanchor="bottom", yshift=4, font=dict(size=12, color="#31333F"))
+        fig_t.update_layout(barmode="stack", title=f"{y3}년 전체 누계", xaxis_title="", yaxis_title="",
+                            height=500, bargap=0.25, dragmode="pan", margin=dict(t=70))
+        fig_t.update_yaxes(tickformat=",.0f", rangemode="tozero")
+        fig_t.update_xaxes(type="category")
+        unit_annotation(fig_t, short_unit)
+
+        col_tot, col_mon = st.columns([1, 3])
+        with col_tot:
+            st.plotly_chart(style_fig(fig_t), width="stretch", config=SA_PLOT_CONFIG)
+        with col_mon:
+            st.plotly_chart(style_fig(fig3), width="stretch", config=SA_PLOT_CONFIG)
+        if partial:
+            st.caption("※ 전체 누계는 데이터가 있는 달까지의 합계입니다: " + ", ".join(partial))
 
         for k in sel3:
             df3 = series[(k, y3)]
