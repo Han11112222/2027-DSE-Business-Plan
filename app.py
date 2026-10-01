@@ -403,13 +403,15 @@ TABLE_CSS = """
 .glance-wrap { overflow-x: auto; margin-bottom: 1rem; }
 .glance { width: 100%; min-width: 760px; border-collapse: collapse; font-family: sans-serif; font-size: 14px; }
 .glance th, .glance td { border: 1px solid #d0d4da; padding: 7px 9px; color: #31333F; }
-.glance thead th { background: #FFF2CC; text-align: center; font-weight: 600; }
+.glance thead th { background: #E4E7EB; text-align: center; font-weight: 600; }
 .glance tbody td { text-align: right; background: #ffffff; }
 .glance td.label { text-align: center; background: #f8f9fa; font-weight: 600; }
 .glance .blk { border-left: 3px solid #333333 !important; }
 .glance .strong { font-weight: 700; }
-.glance tr.subtotal td { background: #DDEBF7; }
-.glance tr.total td { background: #FCE4D6; font-weight: 700; }
+.glance tr.subtotal td { background: #F3F5F7; }
+.glance tr.total td { background: #E4E7EB; font-weight: 700; }
+.glance tr.plain td { background: #ffffff; font-weight: 700; }
+.glance tr.plain td.label { background: #f8f9fa; }
 .glance tr.spacer td { border: none; background: transparent; height: 12px; padding: 0; }
 .glance td.pos { color: #0055a4; }
 .glance td.neg { color: #cc0000; }
@@ -478,7 +480,7 @@ def render_glance_table(df_detail, available, short_unit, cfg):
     rows.append(f'<tr class="spacer"><td colspan="{2 + len(keys) + 2 * len(comps)}"></td></tr>')
     home, ind = df_detail.loc["가정용"], df_detail.loc["산업용"]
     for name, vals in [("가정용", home), ("산업용", ind), ("기타", total - home - ind)]:
-        rows.append(f'<tr class="total"><td class="label" colspan="2">{name}</td>{vc(vals)}</tr>')
+        rows.append(f'<tr class="plain"><td class="label" colspan="2">{name}</td>{vc(vals)}</tr>')
 
     st.markdown(
         TABLE_CSS
