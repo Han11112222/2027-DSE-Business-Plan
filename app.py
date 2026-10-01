@@ -120,6 +120,25 @@ def _norm(v):
 @st.cache_data(ttl=600, show_spinner="구글시트 실적 불러오는 중...")
 def fetch_gsheet_actual(url):
     raw = pd.read_csv(to_csv_url(url), header=None, dtype=str, keep_default_na=False)
+    return parse_gsheet_actual(raw)
+
+
+def read_actual_upload(file):
+    """구글시트 실적 시트와 같은 양식의 엑셀/CSV 업로드 → (long DataFrame, 시트명)"""
+    empty = pd.DataFrame(columns=['연', '월', '그룹', '값'])
+    if str(getattr(file, "name", "")).lower().endswith(".csv"):
+        raw = pd.read_csv(file, header=None, dtype=str, keep_default_na=False)
+        return parse_gsheet_actual(raw), "csv"
+    xl = pd.ExcelFile(file, engine="openpyxl")
+    for sh in xl.sheet_names:   # '[new ver]' 블록이 있는 시트를 찾을 때까지 순서대로 시도
+        raw = xl.parse(sh, header=None, dtype=str).fillna("")
+        df = parse_gsheet_actual(raw)
+        if not df.empty:
+            return df, sh
+    return empty, None
+
+
+def parse_gsheet_actual(raw):
     raw = raw.iloc[:, :GSHEET_LAST_COL]
 
     # 1) 헤더 행 찾기: '[new ver]' 제목 아래의 '정산항목' 행
@@ -1174,6 +1193,14 @@ def main():
         up_supply = st.file_uploader("공급량 데이터 업로드 (새 파일이 있으면 우선 반영됩니다)", type=["xlsx", "csv"])
         st.caption("3. 공급량 분석 탭은 업로드 없이 구글시트만 사용합니다.")
 
+        st.markdown("---")
+        st.subheader("📥 실적 엑셀 업로드 (3번 탭)")
+        up_actual = st.file_uploader("구글시트 실적과 같은 양식의 파일 (2026년 미확정 실적 등)",
+                                     type=["xlsx", "csv"], key="up_actual_sa")
+        st.caption("업로드한 파일에 있는 연·월은 구글시트 실적 대신 사용되고, 나머지 기간은 구글시트 값을 씁니다. "
+                   "파일을 지우면 구글시트 실적으로 돌아갑니다.")
+        up_status = st.empty()
+
     is_tab3 = menu.startswith("3.")
 
     # 계획 데이터 (엑셀) — 1·2번 탭 전용 (3번 탭은 없어도 동작)
@@ -1201,6 +1228,22 @@ def main():
     factor = 1 / 1000 if "GJ" in unit else 1 / heating_value / 1000   # 원자료 MJ 기준
 
     if is_tab3:
+        if up_actual is not None:
+            try:
+                up_long, up_sheet = read_actual_upload(up_actual)
+                if up_long.empty:
+                    up_status.warning("업로드 파일에서 실적 값을 찾지 못했습니다. 구글시트 실적을 사용합니다.\n\n"
+                                      f"('{GSHEET_BLOCK_LABEL}' 제목과 '정산항목' 헤더가 있는 양식이어야 합니다)")
+                else:
+                    keys = set(zip(up_long['연'], up_long['월']))
+                    keep = [(y, m) not in keys for y, m in zip(gs_long['연'], gs_long['월'])]
+                    gs_long = pd.concat([gs_long[keep], up_long], ignore_index=True)
+                    last = up_long['연'].max()
+                    last_m = up_long[up_long['연'] == last]['월'].max()
+                    up_status.success(f"✅ 업로드 실적 반영: {up_long['연'].min()}-{up_long.loc[up_long['연'] == up_long['연'].min(), '월'].min():02d}"
+                                      f" ~ {last}-{last_m:02d} (시트: {up_sheet})")
+            except Exception as e:
+                up_status.error(f"업로드 파일을 읽지 못했습니다: {type(e).__name__}: {e}")
         render_supply_page(data_dict, gs_long, plan_url, plan_status, factor, short_unit)
         return
 
