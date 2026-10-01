@@ -298,7 +298,7 @@ def style_fig(fig):
     return fig
 
 
-def draw_waterfall(df_chart, base, target, short_unit, title=None, names=None):
+def draw_waterfall(df_chart, base, target, short_unit, title=None, names=None, height=440):
     names = names or SERIES_FULL
     base_tot, tgt_tot = df_chart[base].sum(), df_chart[target].sum()
     diffs = (df_chart[target] - df_chart[base]).tolist()
@@ -330,7 +330,7 @@ def draw_waterfall(df_chart, base, target, short_unit, title=None, names=None):
 
     fig.update_layout(
         title=title or f"{names[base]} → {names[target]} 용도별 증감 브릿지",
-        margin=dict(t=70, b=40), height=440, showlegend=False,
+        margin=dict(t=70, b=40), height=height, showlegend=False,
     )
 
     # 마지막(결과) 막대 위에 [증감량 증가/감소] 표시
@@ -593,9 +593,15 @@ def render_one_page_review(page, actual, plan_long, factor, short_unit):
             delta = f"{d:,.0f} ({totals[key] / totals[base] * 100:.1f}%) vs {base}"
         col.metric(label, f"{totals[key]:,.0f} {short_unit}", delta=delta)
 
-    mcols = st.columns(4)
-    metric(mcols[0], "①")
-    metric(mcols[1], "②", "①")
+    left, right = st.columns([5, 6])
+    m1, m2 = left.columns(2)
+    metric(m1, "①")
+    metric(m2, "②", "①")
+    if valid_comps:   # 핵심 지표 오른쪽: 가정용 · 산업용 · 기타 요약 폭포수
+        home, ind = df_detail.loc["가정용"], df_detail.loc["산업용"]
+        df3 = pd.DataFrame([home, ind, df_detail.sum() - home - ind], index=["가정용", "산업용", "기타"])
+        right.plotly_chart(draw_waterfall(df3, "①", "②", short_unit, names=names, height=360,
+                                          title="가정용 · 산업용 · 기타 증감 요약"), width="stretch")
     st.markdown("---")
 
     # ── 2. 폭포수 차트 ──
