@@ -507,10 +507,10 @@ def op_config(page, ver):
         )
     return dict(
         keys=["①", "②"], comps=[("②", "①")],
-        names={"①": act_name, "②": f"{PLAN_YEAR} 계획({vn})"},
+        names={"①": act_name, "②": f"{PLAN_YEAR} 계획"},
         headers={"①": "① 실적", "②": "② 계획"},
         groups=[(f"{BASE_YEAR}년", ["①"]), (f"{PLAN_YEAR}년", ["②"])],
-        wf_title=f"① {BASE_YEAR}년 실적 대비 {PLAN_YEAR}년 계획({vn})",
+        wf_title=f"① {BASE_YEAR}년 실적 대비 {PLAN_YEAR}년 계획",
         table_title=f"🚥 {BASE_YEAR}년 실적 vs {PLAN_YEAR}년 사업계획 요약표",
         plan_year=PLAN_YEAR,
     )
@@ -534,15 +534,17 @@ def render_one_page_review(page, actual, plan_long, factor, short_unit):
     pk = f"op{page}"
     py = BASE_YEAR if page == 1 else PLAN_YEAR
     vers = set(plan_long[plan_long['연'] == py]['버전']) if plan_long is not None and not plan_long.empty else set()
-    base_ver = "V1" if "V1" in vers or not vers else sorted(vers)[0]
-
     notice = st.container()
     h_col, t_col = st.columns([3, 1])
     h_col.markdown("#### 📌 핵심 지표")
-    use_mkt = t_col.toggle("마케팅팀 계획", value=False, key=f"{pk}_mkt", disabled="V2" not in vers,
-                           help=f"{py}년 계획을 마케팅팀 버전(V2)으로 바꿔서 봅니다. 기본값은 제출 계획(V1)입니다."
-                                + ("" if "V2" in vers else f"\n\n계획 시트에 {py}년 마케팅팀 계획이 아직 없습니다."))
-    ver = "V2" if (use_mkt and "V2" in vers) else base_ver
+    if page == 1:   # 2026년만 제출(V1)/마케팅팀(V2) 계획이 있음
+        base_ver = "V1" if "V1" in vers or not vers else sorted(vers)[0]
+        use_mkt = t_col.toggle("마케팅팀 계획", value=False, key=f"{pk}_mkt", disabled="V2" not in vers,
+                               help=f"{py}년 계획을 마케팅팀 버전(V2)으로 바꿔서 봅니다. 기본값은 제출 계획(V1)입니다."
+                                    + ("" if "V2" in vers else f"\n\n계획 시트에 {py}년 마케팅팀 계획이 아직 없습니다."))
+        ver = "V2" if (use_mkt and "V2" in vers) else base_ver
+    else:           # 2027년 계획은 1개 버전
+        ver = "V1" if "V1" in vers or not vers else sorted(vers)[0]
     cfg = op_config(page, ver)
     keys, names = cfg["keys"], cfg["names"]
 
@@ -944,6 +946,13 @@ def parse_plan_sheet(raw):
         blocks.append({"연도": year, "버전": ver, "헤더 행": b["hdr"] + 1, "용도 행 수": n_rows, "제목": title or "(제목 없음)"})
 
     df = pd.DataFrame(records, columns=['연', '월', '그룹', '값', '버전'])
+    per_year = {}
+    for bl in blocks:
+        per_year.setdefault(bl["연도"], []).append(bl)
+    for y, bls in per_year.items():   # 블록이 1개뿐인 연도(예: 2027)는 버전 구분 없이 V1
+        if len(bls) == 1:
+            df.loc[df['연'] == y, '버전'] = "V1"
+            bls[0]["버전"] = "V1"
     return df, {"blocks": blocks, "unmapped": sorted(unmapped)}
 
 
