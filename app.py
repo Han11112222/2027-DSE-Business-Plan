@@ -607,9 +607,10 @@ def render_one_page_review(page, actual, plan_long, factor, short_unit):
     wf_h.markdown(f"##### {cfg['wf_title']}")
     simple = wf_t.toggle("심플버전", value=False, key=f"{pk}_simple", disabled=not valid_comps)
     if valid_comps:
-        if simple:   # 가정용 · 산업용 · 기타 3개로 묶어서 표시
-            home, ind = df_detail.loc["가정용"], df_detail.loc["산업용"]
-            df3 = pd.DataFrame([home, ind, df_detail.sum() - home - ind], index=["가정용", "산업용", "기타"])
+        if simple:   # 가정용 · 산업용 · 연료전지 · 기타로 묶어서 표시
+            home, ind, fc = df_detail.loc["가정용"], df_detail.loc["산업용"], df_detail.loc["연료전지"]
+            df3 = pd.DataFrame([home, ind, fc, df_detail.sum() - home - ind - fc],
+                               index=["가정용", "산업용", "연료전지", "기타"])
             st.plotly_chart(draw_waterfall(df3, "①", "②", short_unit, names=names, height=380), width="stretch")
         else:
             st.plotly_chart(draw_waterfall(df_chart, "①", "②", short_unit, names=names), width="stretch")
