@@ -135,7 +135,8 @@ def fetch_actual_est_from_plan_sheet(url):
     """
     raw = pd.read_csv(to_csv_url(url), header=None, dtype=str, keep_default_na=False)
 
-    # '2026년 추정실적' 섹션 찾기
+    # '2026년 추정실적' 섹션 찾기 — 시트 상단에도 같은 텍스트가 있을 수 있으므로
+    # 마지막(가장 아래) 매치를 사용한다 (섹션 4는 시트 하단에 위치)
     start_idx = None
     for i in range(len(raw)):
         for j in range(min(5, raw.shape[1])):
@@ -143,8 +144,6 @@ def fetch_actual_est_from_plan_sheet(url):
             if "2026" in cell and "추정실적" in cell:
                 start_idx = i
                 break
-        if start_idx is not None:
-            break
 
     if start_idx is None:
         return pd.DataFrame(columns=['연', '월', '그룹', '값'])
@@ -160,12 +159,17 @@ def fetch_actual_est_from_plan_sheet(url):
     # B열(col1)=상품명, C~N열(col2~col13)=1~12월, 단위 GJ → ×1000 → MJ
     records = []
     for i in range(header_idx + 1, len(raw)):
+        col_a = _norm(raw.iat[i, 0])
         prod_name = _norm(raw.iat[i, 1])
-        if not prod_name:
-            continue
-        if prod_name in ("합계", "합 계"):
+        # 합계 행 감지: A열(병합셀) 또는 B열에 '합계'가 있으면 중단
+        if col_a == "합계" or prod_name == "합계":
             break
-        if prod_name in ("소계", "소 계"):
+        if not prod_name and not col_a:
+            continue
+        # 소계 행 스킵: A열 또는 B열
+        if col_a == "소계" or prod_name == "소계":
+            continue
+        if not prod_name:
             continue
         group = MAPPING_SUPPLY.get(prod_name, prod_name)
         for m in range(1, 13):
@@ -969,6 +973,10 @@ def parse_plan_sheet(raw):
             if _YEAR_RE.search(t):
                 title = t
                 break
+        # '추정실적' 섹션은 계획이 아니라 실적 데이터이므로 건너뛴다
+        if "추정실적" in title:
+            continue
+
         m = _YEAR_RE.search(title)
         year = b["year"] or (int(m.group(1)) if m else
                              (BASE_YEAR if prev_year is None else
