@@ -24,9 +24,9 @@ GSHEET_LAST_COL = 702              # ZZ열
 
 EXCEL_FILE = "공급량실적_계획_실적_MJ.xlsx"
 
-# 2026년 실적 추정 (3번 탭 전용): 같은 연·월이 있으면 위 '실적' 시트 대신 이 시트 값을 사용
-#   양식: B열 비고, C열 상품, D열~ 'YYYY-MM' 월 헤더, 소계/합계 행 포함 (단위 MJ)
-ACTUAL_EST_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1a_3OgmZxJvKw2GxsH_QIXdGNqWcwgpZPb2sKUQAI0vE/edit?gid=0#gid=0"
+# 2026년 실적 추정: 상품별공급량계획 시트의 '4. 2026년 추정실적' 섹션
+#   양식: B열 상품명, C~N열 1~12월 (단위 GJ → ×1000 → MJ 변환)
+ACTUAL_EST_GSHEET_URL = "https://docs.google.com/spreadsheets/d/1PSzKts5lL_zNNi_vfKlW1CdNZasTA-jBj_UCNEtu-x0/edit?gid=0#gid=0"
 
 # 계획 데이터: 구글 스프레드시트 (3. 공급량 분석 탭 전용)
 #   블록 1개 = 제목행 + 헤더행('구분','1월'~'12월','합계') + 용도별 행 + '합계' 행
@@ -125,6 +125,57 @@ def _norm(v):
 def fetch_gsheet_actual(url):
     raw = pd.read_csv(to_csv_url(url), header=None, dtype=str, keep_default_na=False)
     return parse_gsheet_actual(raw)
+
+
+@st.cache_data(ttl=600, show_spinner="2026년 추정실적 불러오는 중...")
+def fetch_actual_est_from_plan_sheet(url):
+    """상품별공급량계획 시트 '4. 2026년 추정실적' 섹션 파싱
+    구조: B열=상품명, C~N열=1~12월 (단위 GJ → ×1000 → MJ)
+    반환: DataFrame(columns=['연', '월', '그룹', '값'])  — 값은 MJ
+    """
+    raw = pd.read_csv(to_csv_url(url), header=None, dtype=str, keep_default_na=False)
+
+    # '2026년 추정실적' 섹션 찾기
+    start_idx = None
+    for i in range(len(raw)):
+        for j in range(min(5, raw.shape[1])):
+            cell = str(raw.iat[i, j])
+            if "2026" in cell and "추정실적" in cell:
+                start_idx = i
+                break
+        if start_idx is not None:
+            break
+
+    if start_idx is None:
+        return pd.DataFrame(columns=['연', '월', '그룹', '값'])
+
+    # '구분' 헤더 행 찾기 (start_idx 이후 5행 이내)
+    header_idx = start_idx
+    for i in range(start_idx, min(start_idx + 5, len(raw))):
+        if _norm(raw.iat[i, 1]) == "구분":
+            header_idx = i
+            break
+
+    # 데이터 행: header_idx+1 부터 '합계' 행까지
+    # B열(col1)=상품명, C~N열(col2~col13)=1~12월, 단위 GJ → ×1000 → MJ
+    records = []
+    for i in range(header_idx + 1, len(raw)):
+        prod_name = _norm(raw.iat[i, 1])
+        if not prod_name:
+            continue
+        if prod_name in ("합계", "합 계"):
+            break
+        if prod_name in ("소계", "소 계"):
+            continue
+        group = MAPPING_SUPPLY.get(prod_name, prod_name)
+        for m in range(1, 13):
+            col_idx = m + 1  # col2=C=1월, col3=D=2월, ..., col13=N=12월
+            if col_idx < raw.shape[1]:
+                val = pd.to_numeric(str(raw.iat[i, col_idx]).replace(",", "").strip(), errors="coerce")
+                if pd.notna(val) and val != 0:
+                    records.append((2026, m, group, float(val) * 1000))  # GJ → MJ
+
+    return pd.DataFrame(records, columns=['연', '월', '그룹', '값'])
 
 
 def parse_gsheet_actual(raw):
@@ -1396,10 +1447,9 @@ def main():
     # 2026년 실적 추정 시트: 있는 연·월은 이 값으로 덮어씀 (모든 탭 공통)
     if est_url.strip():
         try:
-            est_long = fetch_gsheet_actual(est_url.strip())
+            est_long = fetch_actual_est_from_plan_sheet(est_url.strip())
             if est_long.empty:
-                est_status.warning("실적 추정 시트에서 값을 찾지 못했습니다. '실적' 시트 값만 사용합니다.\n\n"
-                                   "(C열 '상품' 헤더와 'YYYY-MM' 월 헤더가 있는 양식이어야 합니다)")
+                est_status.warning("실적 추정 시트에서 '4. 2026년 추정실적' 섹션을 찾지 못했습니다. '실적' 시트 값만 사용합니다.")
             else:
                 keys = set(zip(est_long['연'], est_long['월']))
                 keep = [(y, m) not in keys for y, m in zip(gs_long['연'], gs_long['월'])]
