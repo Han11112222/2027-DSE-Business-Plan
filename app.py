@@ -335,7 +335,7 @@ def assemble_data(data_dict, gs_long):
     p['구분'] = p['연'].apply(lambda y: "계획" if y <= BASE_YEAR else "당초")
     a = action[action['연'] != BASE_YEAR].copy()
     a['구분'] = a['연'].apply(lambda y: "예상실적" if y < BASE_YEAR else "실천")
-    hist = pd.concat([actual.assign(구분="실적"), p, a, blend.assign(연=BASE_YEAR, 구분="예상실적")],
+    hist = pd.concat([actual[actual['연'] != BASE_YEAR].assign(구분="실적"), p, a, blend.assign(연=BASE_YEAR, 구분="예상실적")],
                      ignore_index=True)
     hist = hist[hist['연'] <= PLAN_YEAR]
     hist['그룹'] = hist['그룹'].map(to_chart_group)
@@ -986,6 +986,10 @@ def parse_plan_sheet(raw):
                 break
         # '추정실적' 섹션은 계획이 아니라 실적 데이터이므로 건너뛴다
         if "추정실적" in title:
+            continue
+        # Best/Cons 시나리오 섹션은 사용하지 않음 (Normal 하나만 사용)
+        ttmp = title.lower()
+        if "best" in ttmp or "cons" in ttmp:
             continue
 
         m = _YEAR_RE.search(title)
