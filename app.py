@@ -993,18 +993,18 @@ def parse_plan_sheet(raw):
                              (BASE_YEAR if prev_year is None else
                               (prev_year if count.get(prev_year, 0) < 2 else prev_year + 1)))
         tl = title.lower()
-        # "normal"/"제출" → V1 을 먼저 체크 (제목에 "마케팅"과 "normal" 동시 포함 가능)
+        # "제출"만 V1 고정, 나머지는 등장 순서로 버전 부여
+        # ("normal"은 마케팅팀 제목에도 포함되어 키워드로 쓸 수 없음)
         ver = b["ver"] or (
-            "V1" if ("normal" in tl or "제출" in tl)
-            else "V2" if ("마케팅" in tl or "marketing" in tl)
+            "V1" if "제출" in tl
             else f"V{count.get(year, 0) + 1}"
         )
         # 중복 버전이면 빈 번호를 찾아 할당
         if (year, ver) in used:
-            n = count.get(year, 0) + 1
-            while (year, f"V{n}") in used:
-                n += 1
-            ver = f"V{n}"
+            vn = count.get(year, 0) + 1
+            while (year, f"V{vn}") in used:
+                vn += 1
+            ver = f"V{vn}"
         used.add((year, ver))
         count[year] = count.get(year, 0) + 1
         prev_year = year
