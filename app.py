@@ -137,21 +137,31 @@ def fetch_actual_est_from_plan_sheet(url):
 
     # '2026년 추정실적' 섹션 찾기 — 시트 상단에도 같은 텍스트가 있을 수 있으므로
     # 마지막(가장 아래) 매치를 사용한다 (섹션 4는 시트 하단에 위치)
+    # 제목이 여러 셀에 걸쳐있을 수 있으므로 행 전체 텍스트도 확인한다
     start_idx = None
     for i in range(len(raw)):
+        # 개별 셀 체크
+        found = False
         for j in range(min(5, raw.shape[1])):
             cell = str(raw.iat[i, j])
             if "2026" in cell and "추정실적" in cell:
-                start_idx = i
+                found = True
                 break
+        # 행 전체 텍스트 결합 체크 (제목이 A="4. 2026년" B="추정실적" 처럼 분리된 경우)
+        if not found:
+            row_text = " ".join(str(raw.iat[i, j]) for j in range(min(5, raw.shape[1])))
+            if "2026" in row_text and "추정실적" in row_text:
+                found = True
+        if found:
+            start_idx = i
 
     if start_idx is None:
         return pd.DataFrame(columns=['연', '월', '그룹', '값'])
 
-    # '구분' 헤더 행 찾기 (start_idx 이후 5행 이내)
+    # '구분' 헤더 행 찾기 (start_idx 이후 5행 이내, A열 또는 B열)
     header_idx = start_idx
     for i in range(start_idx, min(start_idx + 5, len(raw))):
-        if _norm(raw.iat[i, 1]) == "구분":
+        if _norm(raw.iat[i, 1]) == "구분" or _norm(raw.iat[i, 0]) == "구분":
             header_idx = i
             break
 
@@ -982,10 +992,18 @@ def parse_plan_sheet(raw):
                              (BASE_YEAR if prev_year is None else
                               (prev_year if count.get(prev_year, 0) < 2 else prev_year + 1)))
         tl = title.lower()
-        ver = b["ver"] or ("V2" if ("마케팅" in tl or "marketing" in tl)
-                           else "V1" if ("normal" in tl or "제출" in tl) else f"V{count.get(year, 0) + 1}")
+        # "normal"/"제출" → V1 을 먼저 체크 (제목에 "마케팅"과 "normal" 동시 포함 가능)
+        ver = b["ver"] or (
+            "V1" if ("normal" in tl or "제출" in tl)
+            else "V2" if ("마케팅" in tl or "marketing" in tl)
+            else f"V{count.get(year, 0) + 1}"
+        )
+        # 중복 버전이면 빈 번호를 찾아 할당
         if (year, ver) in used:
-            ver = f"V{count.get(year, 0) + 1}"
+            n = count.get(year, 0) + 1
+            while (year, f"V{n}") in used:
+                n += 1
+            ver = f"V{n}"
         used.add((year, ver))
         count[year] = count.get(year, 0) + 1
         prev_year = year
