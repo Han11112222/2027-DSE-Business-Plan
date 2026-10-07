@@ -337,7 +337,6 @@ def assemble_data(data_dict, gs_long):
     a['구분'] = a['연'].apply(lambda y: "예상실적" if y < BASE_YEAR else "실천")
     hist = pd.concat([actual[actual['연'] != BASE_YEAR].assign(구분="실적"), p, a, blend.assign(연=BASE_YEAR, 구분="예상실적")],
                      ignore_index=True)
-    hist = hist[hist['연'] <= PLAN_YEAR]
     hist['그룹'] = hist['그룹'].map(to_chart_group)
 
     return {"series": series, "hist": hist, "act_months": act_months, "actual": actual}
@@ -547,6 +546,7 @@ def render_glance_table(df_detail, available, short_unit, cfg):
     home, ind = df_detail.loc["가정용"], df_detail.loc["산업용"]
     for name, vals in [("가정용", home), ("산업용", ind), ("기타", total - home - ind)]:
         rows.append(f'<tr class="plain"><td class="label" colspan="2">{name}</td>{vc(vals)}</tr>')
+    rows.append(f'<tr class="total"><td class="label" colspan="2">합계</td>{vc(total)}</tr>')
 
     st.markdown(
         TABLE_CSS
@@ -1497,6 +1497,16 @@ def main():
 
     if menu == TAB3:
         data = assemble_data(data_dict, gs_long)
+        # 구글시트 계획 데이터도 세부내용 이력에 추가 (2027년 등 엑셀에 없는 연도)
+        plan_long_t3, _ = load_plan(plan_url, plan_status)
+        if plan_long_t3 is not None and not plan_long_t3.empty:
+            pl = plan_long_t3[['연', '월', '그룹', '값']].copy()
+            pl['구분'] = "계획"
+            pl['그룹'] = pl['그룹'].map(to_chart_group)
+            hist_plan_years = set(data["hist"][data["hist"]["구분"] == "계획"]["연"].unique())
+            pl = pl[~pl["연"].isin(hist_plan_years)]
+            if not pl.empty:
+                data["hist"] = pd.concat([data["hist"], pl], ignore_index=True)
         act_months = data["act_months"]
         if act_months and max(act_months) < 12:
             st.caption(f"ℹ️ ② {BASE_YEAR} 실적(예상) = 1~{max(act_months)}월 실적 + "
