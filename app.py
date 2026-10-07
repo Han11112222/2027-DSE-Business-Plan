@@ -180,7 +180,8 @@ def fetch_actual_est_from_plan_sheet(url):
         if col_a == "소계" or prod_name == "소계":
             continue
         if not prod_name:
-            continue
+            # 독립 상품(산업용, 열병합용, 연료전지 등)은 A열에만 이름이 있고 B열이 비어있음
+            prod_name = col_a
         group = MAPPING_SUPPLY.get(prod_name, prod_name)
         for m in range(1, 13):
             col_idx = m + 1  # col2=C=1월, col3=D=2월, ..., col13=N=12월
